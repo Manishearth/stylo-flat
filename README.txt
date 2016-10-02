@@ -1,3 +1,17 @@
+This is a flattened copy of http://hg.mozilla.org/incubator/stylo
+
+Feel free to make pull requests to this repo. I shall review them and submit them
+upstream. In the long term, it would be preferably to switch to the official mozreview
+workflow (ask me if you need help)
+
+To build, just run `./mach build`. The mozconfig is already set up. Note that this
+builds debug/no-opt builds by default, but this can be changed in the config.
+
+There is a copy of servo in the `servo/` folder used in stylo.
+
+
+-------------------------------
+
 An explanation of the Mozilla Source Code Directory Structure and links to
 project pages with documentation can be found at:
 
