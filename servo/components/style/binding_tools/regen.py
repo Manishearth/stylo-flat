@@ -74,7 +74,6 @@ COMPILATION_TARGETS = {
             "NS_THEME_.*",
             "NODE_.*",
             "NS_FONT_STYLE_.*",
-            "NS_FONT_VARIANT_.*",
             "NS_STYLE_.*",
             "NS_CORNER_.*",
             "NS_RADIUS_.*",
