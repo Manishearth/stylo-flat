@@ -38,6 +38,8 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
 
+#include "nsArray.h"
+#include "nsArrayUtils.h"
 #include "nsIDOMStorage.h"
 #include "nsIContentViewer.h"
 #include "nsIDocumentLoaderFactory.h"
@@ -205,7 +207,6 @@
 #include "nsISecureBrowserUI.h"
 #include "nsISocketProvider.h"
 #include "nsIStringBundle.h"
-#include "nsISupportsArray.h"
 #include "nsIURIFixup.h"
 #include "nsIURILoader.h"
 #include "nsIURL.h"
@@ -6684,21 +6685,20 @@ nsDocShell::RefreshURI(nsIURI* aURI, int32_t aDelay, bool aRepeat,
   refreshTimer->mMetaRefresh = aMetaRefresh;
 
   if (!mRefreshURIList) {
-    NS_ENSURE_SUCCESS(NS_NewISupportsArray(getter_AddRefs(mRefreshURIList)),
-                      NS_ERROR_FAILURE);
+    mRefreshURIList = nsArray::Create();
   }
 
   if (busyFlags & BUSY_FLAGS_BUSY || (!mIsActive && mDisableMetaRefreshWhenInactive)) {
     // We don't  want to create the timer right now. Instead queue up the request
     // and trigger the timer in EndPageLoad() or whenever we become active.
-    mRefreshURIList->AppendElement(refreshTimer);
+    mRefreshURIList->AppendElement(refreshTimer, /*weak =*/ false);
   } else {
     // There is no page loading going on right now.  Create the
     // timer and fire it right away.
     nsCOMPtr<nsITimer> timer = do_CreateInstance("@mozilla.org/timer;1");
     NS_ENSURE_TRUE(timer, NS_ERROR_FAILURE);
 
-    mRefreshURIList->AppendElement(timer);  // owning timer ref
+    mRefreshURIList->AppendElement(timer, /*weak =*/ false);  // owning timer ref
     timer->InitWithCallback(refreshTimer, aDelay, nsITimer::TYPE_ONE_SHOT);
   }
   return NS_OK;
@@ -6715,7 +6715,7 @@ nsDocShell::ForceRefreshURIFromTimer(nsIURI* aURI,
   // Remove aTimer from mRefreshURIList if needed
   if (mRefreshURIList) {
     uint32_t n = 0;
-    mRefreshURIList->Count(&n);
+    mRefreshURIList->GetLength(&n);
 
     for (uint32_t i = 0; i < n; ++i) {
       nsCOMPtr<nsITimer> timer = do_QueryElementAt(mRefreshURIList, i);
@@ -7082,14 +7082,14 @@ nsDocShell::SetupRefreshURI(nsIChannel* aChannel)
 }
 
 static void
-DoCancelRefreshURITimers(nsISupportsArray* aTimerList)
+DoCancelRefreshURITimers(nsIMutableArray* aTimerList)
 {
   if (!aTimerList) {
     return;
   }
 
   uint32_t n = 0;
-  aTimerList->Count(&n);
+  aTimerList->GetLength(&n);
 
   while (n) {
     nsCOMPtr<nsITimer> timer(do_QueryElementAt(aTimerList, --n));
@@ -7122,7 +7122,7 @@ nsDocShell::GetRefreshPending(bool* aResult)
   }
 
   uint32_t count;
-  nsresult rv = mRefreshURIList->Count(&count);
+  nsresult rv = mRefreshURIList->GetLength(&count);
   if (NS_SUCCEEDED(rv)) {
     *aResult = (count != 0);
   }
@@ -7134,7 +7134,7 @@ nsDocShell::SuspendRefreshURIs()
 {
   if (mRefreshURIList) {
     uint32_t n = 0;
-    mRefreshURIList->Count(&n);
+    mRefreshURIList->GetLength(&n);
 
     for (uint32_t i = 0; i < n; ++i) {
       nsCOMPtr<nsITimer> timer = do_QueryElementAt(mRefreshURIList, i);
@@ -7152,7 +7152,7 @@ nsDocShell::SuspendRefreshURIs()
       NS_ASSERTION(rt,
                    "RefreshURIList timer callbacks should only be RefreshTimer objects");
 
-      mRefreshURIList->ReplaceElementAt(rt, i);
+      mRefreshURIList->ReplaceElementAt(rt, i, /*weak =*/ false);
     }
   }
 
@@ -7192,12 +7192,11 @@ nsDocShell::RefreshURIFromQueue()
     return NS_OK;
   }
   uint32_t n = 0;
-  mRefreshURIList->Count(&n);
+  mRefreshURIList->GetLength(&n);
 
   while (n) {
-    nsCOMPtr<nsISupports> element;
-    mRefreshURIList->GetElementAt(--n, getter_AddRefs(element));
-    nsCOMPtr<nsITimerCallback> refreshInfo(do_QueryInterface(element));
+    nsCOMPtr<nsITimerCallback> refreshInfo =
+        do_QueryElementAt(mRefreshURIList, --n);
 
     if (refreshInfo) {
       // This is the nsRefreshTimer object, waiting to be
@@ -7212,7 +7211,7 @@ nsDocShell::RefreshURIFromQueue()
         // its corresponding timer object, so that in case another
         // load comes through before the timer can go off, the timer will
         // get cancelled in CancelRefreshURITimer()
-        mRefreshURIList->ReplaceElementAt(timer, n);
+        mRefreshURIList->ReplaceElementAt(timer, n, /*weak =*/ false);
         timer->InitWithCallback(refreshInfo, delay, nsITimer::TYPE_ONE_SHOT);
       }
     }
@@ -8735,7 +8734,7 @@ nsDocShell::RestoreFromHistory()
 
   // Restore the refresh URI list.  The refresh timers will be restarted
   // when EndPageLoad() is called.
-  nsCOMPtr<nsISupportsArray> refreshURIList;
+  nsCOMPtr<nsIMutableArray> refreshURIList;
   mLSHE->GetRefreshURIList(getter_AddRefs(refreshURIList));
 
   // Reattach to the window object.
@@ -8755,7 +8754,7 @@ nsDocShell::RestoreFromHistory()
 
 #ifdef DEBUG
   {
-    nsCOMPtr<nsISupportsArray> refreshURIs;
+    nsCOMPtr<nsIMutableArray> refreshURIs;
     mLSHE->GetRefreshURIList(getter_AddRefs(refreshURIs));
     nsCOMPtr<nsIDocShellTreeItem> childShell;
     mLSHE->ChildShellAt(0, getter_AddRefs(childShell));
@@ -9782,18 +9781,6 @@ nsDocShell::InternalLoad(nsIURI* aURI,
     isJavaScript = false;
   }
 
-  RefPtr<nsGlobalWindow> scriptGlobal = mScriptGlobal;
-
-  // First, notify any nsIContentPolicy listeners about the document load.
-  // Only abort the load if a content policy listener explicitly vetos it!
-  // Use nsPIDOMWindow since we _want_ to cross the chrome boundary if needed
-  nsCOMPtr<Element> requestingElement =
-    scriptGlobal->AsOuter()->GetFrameElementInternal();
-
-
-  int16_t shouldLoad = nsIContentPolicy::ACCEPT;
-  uint32_t contentType;
-  bool isNewDocShell = false;
   bool isTargetTopLevelDocShell = false;
   nsCOMPtr<nsIDocShell> targetDocShell;
   if (aWindowTarget && *aWindowTarget) {
@@ -9804,14 +9791,15 @@ nsDocShell::InternalLoad(nsIURI* aURI,
     NS_ENSURE_SUCCESS(rv, rv);
 
     targetDocShell = do_QueryInterface(targetItem);
-    // If the targetDocShell doesn't exist, then this is a new docShell
-    // and we should consider this a TYPE_DOCUMENT load
-    isNewDocShell = !targetDocShell;
-
-    // If the targetDocShell and the rootDocShell are the same, then the
-    // targetDocShell is the top level document and hence we should
-    // consider this TYPE_DOCUMENT
     if (targetDocShell) {
+      // If the targetDocShell and the rootDocShell are the same, then the
+      // targetDocShell is the top level document and hence we should
+      // consider this TYPE_DOCUMENT
+      //
+      // For example:
+      // 1. target="_top"
+      // 2. target="_parent", where this docshell is in the 2nd level of
+      //    docshell tree.
       nsCOMPtr<nsIDocShellTreeItem> sameTypeRoot;
       targetDocShell->GetSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
       NS_ASSERTION(sameTypeRoot,
@@ -9819,13 +9807,26 @@ nsDocShell::InternalLoad(nsIURI* aURI,
       nsCOMPtr<nsIDocShell> rootShell = do_QueryInterface(sameTypeRoot);
       NS_ASSERTION(rootShell,
                    "No root docshell from document shell root tree item.");
-
-      if (targetDocShell == rootShell) {
-        isTargetTopLevelDocShell = true;
-      }
+      isTargetTopLevelDocShell = targetDocShell == rootShell;
+    } else {
+      // If the targetDocShell doesn't exist, then this is a new docShell
+      // and we should consider this a TYPE_DOCUMENT load
+      //
+      // For example, when target="_blank"
+      isTargetTopLevelDocShell = true;
     }
   }
-  if (IsFrame() && !isNewDocShell && !isTargetTopLevelDocShell) {
+
+  // The contentType will be INTERNAL_(I)FRAME if:
+  // 1. This docshell is for iframe.
+  // 2. AND aWindowTarget is not a new window, nor a top-level window.
+  //
+  // This variable will be used when we call NS_CheckContentLoadPolicy, and
+  // later when we call DoURILoad.
+  uint32_t contentType;
+  if (IsFrame() && !isTargetTopLevelDocShell) {
+    nsCOMPtr<Element> requestingElement =
+      mScriptGlobal->AsOuter()->GetFrameElementInternal();
     NS_ASSERTION(requestingElement, "A frame but no DOM element!?");
     contentType = requestingElement->IsHTMLElement(nsGkAtoms::iframe) ?
       nsIContentPolicy::TYPE_INTERNAL_IFRAME : nsIContentPolicy::TYPE_INTERNAL_FRAME;
@@ -9833,51 +9834,84 @@ nsDocShell::InternalLoad(nsIURI* aURI,
     contentType = nsIContentPolicy::TYPE_DOCUMENT;
   }
 
-  nsISupports* context = requestingElement;
-  if (!context) {
-    context = ToSupports(scriptGlobal);
-  }
+  // If there's no targetDocShell, that means we are about to create a new window,
+  // perform a content policy check before creating the window.
+  if (!targetDocShell) {
+    nsCOMPtr<Element> requestingElement;
+    nsISupports* requestingContext = nullptr;
 
-  // XXXbz would be nice to know the loading principal here... but we don't
-  nsCOMPtr<nsIPrincipal> loadingPrincipal = aTriggeringPrincipal;
-  if (!loadingPrincipal && aReferrer) {
-    rv =
-      CreatePrincipalFromReferrer(aReferrer, getter_AddRefs(loadingPrincipal));
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
+    if (contentType == nsIContentPolicy::TYPE_DOCUMENT) {
+      if (XRE_IsContentProcess()) {
+        // In e10s the child process doesn't have access to the element that
+        // contains the browsing context (because that element is in the chrome
+        // process). So we just pass mScriptGlobal.
+        requestingContext = ToSupports(mScriptGlobal);
+      } else {
+        // This is for loading non-e10s tabs and toplevel windows of various
+        // sorts.
+        // For the toplevel window cases, requestingElement will be null.
+        requestingElement = mScriptGlobal->AsOuter()->GetFrameElementInternal();
+        requestingContext = requestingElement;
+      }
+    } else {
+      requestingElement = mScriptGlobal->AsOuter()->GetFrameElementInternal();
+      requestingContext = requestingElement;
 
-  rv = NS_CheckContentLoadPolicy(contentType,
-                                 aURI,
-                                 loadingPrincipal,
-                                 context,
-                                 EmptyCString(),  // mime guess
-                                 nullptr,  // extra
-                                 &shouldLoad);
+#ifdef DEBUG
+      // Get the docshell type for requestingElement.
+      nsCOMPtr<nsIDocument> requestingDoc = requestingElement->OwnerDoc();
+      nsCOMPtr<nsIDocShell> elementDocShell = requestingDoc->GetDocShell();
 
-  if (NS_FAILED(rv) || NS_CP_REJECTED(shouldLoad)) {
-    if (NS_SUCCEEDED(rv) && shouldLoad == nsIContentPolicy::REJECT_TYPE) {
-      return NS_ERROR_CONTENT_BLOCKED_SHOW_ALT;
+      // requestingElement docshell type = current docshell type.
+      MOZ_ASSERT(mItemType == elementDocShell->ItemType(),
+                "subframes should have the same docshell type as their parent");
+#endif
     }
 
-    return NS_ERROR_CONTENT_BLOCKED;
-  }
+    // XXXbz would be nice to know the loading principal here... but we don't
+    nsCOMPtr<nsIPrincipal> requestingPrincipal = aTriggeringPrincipal;
+    if (!requestingPrincipal && aReferrer) {
+      rv =
+        CreatePrincipalFromReferrer(aReferrer, getter_AddRefs(requestingPrincipal));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
 
-  // If HSTS priming was set by nsMixedContentBlocker::ShouldLoad, and we
-  // would block due to mixed content, go ahead and block here. If we try to
-  // proceed with priming, we will error out later on.
-  nsCOMPtr<nsIDocShell> docShell = NS_CP_GetDocShellFromContext(context);
-  NS_ENSURE_TRUE(docShell, NS_OK);
-  if (docShell) {
-    nsIDocument* document = docShell->GetDocument();
-    NS_ENSURE_TRUE(document, NS_OK);
+    int16_t shouldLoad = nsIContentPolicy::ACCEPT;
+    rv = NS_CheckContentLoadPolicy(contentType,
+                                   aURI,
+                                   requestingPrincipal,
+                                   requestingContext,
+                                   EmptyCString(),  // mime guess
+                                   nullptr,  // extra
+                                   &shouldLoad);
 
-    HSTSPrimingState state = document->GetHSTSPrimingStateForLocation(aURI);
-    if (state == HSTSPrimingState::eHSTS_PRIMING_BLOCK) {
-      // HSTS Priming currently disabled for InternalLoad, so we need to clear
-      // the location that was added by nsMixedContentBlocker::ShouldLoad
-      // Bug 1269815 will address images loaded via InternalLoad
-      document->ClearHSTSPrimingLocation(aURI);
+    if (NS_FAILED(rv) || NS_CP_REJECTED(shouldLoad)) {
+      if (NS_SUCCEEDED(rv) && shouldLoad == nsIContentPolicy::REJECT_TYPE) {
+        return NS_ERROR_CONTENT_BLOCKED_SHOW_ALT;
+      }
+
       return NS_ERROR_CONTENT_BLOCKED;
+    }
+
+    // If HSTS priming was set by nsMixedContentBlocker::ShouldLoad, and we
+    // would block due to mixed content, go ahead and block here. If we try to
+    // proceed with priming, we will error out later on.
+    nsCOMPtr<nsIDocShell> docShell = NS_CP_GetDocShellFromContext(requestingContext);
+    // When loading toplevel windows, requestingContext can be null.  We don't
+    // really care about HSTS in that situation, though; loads in toplevel
+    // windows should all be browser UI.
+    if (docShell) {
+      nsIDocument* document = docShell->GetDocument();
+      NS_ENSURE_TRUE(document, NS_OK);
+
+      HSTSPrimingState state = document->GetHSTSPrimingStateForLocation(aURI);
+      if (state == HSTSPrimingState::eHSTS_PRIMING_BLOCK) {
+        // HSTS Priming currently disabled for InternalLoad, so we need to clear
+        // the location that was added by nsMixedContentBlocker::ShouldLoad
+        // Bug 1269815 will address images loaded via InternalLoad
+        document->ClearHSTSPrimingLocation(aURI);
+        return NS_ERROR_CONTENT_BLOCKED;
+      }
     }
   }
 
@@ -10364,6 +10398,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
       // applies to aURI.
       CopyFavicon(currentURI, aURI, doc->NodePrincipal(), UsePrivateBrowsing());
 
+      RefPtr<nsGlobalWindow> scriptGlobal = mScriptGlobal;
       RefPtr<nsGlobalWindow> win = scriptGlobal ?
         scriptGlobal->GetCurrentInnerWindowInternal() : nullptr;
 
@@ -10809,11 +10844,16 @@ nsDocShell::DoURILoad(nsIURI* aURI,
   }
 
   // Getting the right triggeringPrincipal needs to be updated and is only
-  // ready for use once bug 1182569 landed.
-  // Until then, we cannot rely on the triggeringPrincipal for TYPE_DOCUMENT
-  // or TYPE_SUBDOCUMENT loads.  Notice the triggeringPrincipal falls back to
-  // systemPrincipal below.
+  // ready for use once bug 1182569 landed. Until then, we cannot rely on
+  // the triggeringPrincipal for TYPE_DOCUMENT loads. Please note that the
+  // triggeringPrincipal falls back to the systemPrincipal below.
   nsCOMPtr<nsIPrincipal> triggeringPrincipal = aTriggeringPrincipal;
+
+  // Make sure that we always get a non null triggeringPrincipal for
+  // loads of type TYPE_SUBDOCUMENT.
+  MOZ_ASSERT(aContentPolicyType != nsIContentPolicy::TYPE_SUBDOCUMENT ||
+             triggeringPrincipal, "Need a valid triggeringPrincipal");
+
   if (!triggeringPrincipal) {
     if (aReferrerURI) {
       rv = CreatePrincipalFromReferrer(aReferrerURI,
@@ -11691,9 +11731,12 @@ nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
     AddURIVisit(aURI, referrer, previousURI, previousFlags, responseStatus);
   }
 
-  // If this was a history load or a refresh,
-  // update the index in SH.
-  if (rootSH && (mLoadType & (LOAD_CMD_HISTORY | LOAD_CMD_RELOAD))) {
+  // If this was a history load or a refresh, or it was a history load but
+  // later changed to LOAD_NORMAL_REPLACE due to redirection, update the index
+  // in session history.
+  if (rootSH &&
+       ((mLoadType & (LOAD_CMD_HISTORY | LOAD_CMD_RELOAD)) ||
+         mLoadType == LOAD_NORMAL_REPLACE)) {
     nsCOMPtr<nsISHistoryInternal> shInternal(do_QueryInterface(rootSH));
     if (shInternal) {
       rootSH->GetIndex(&mPreviousTransIndex);
@@ -12329,9 +12372,14 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
     // This is the root docshell
     bool addToSHistory = !LOAD_TYPE_HAS_FLAGS(mLoadType, LOAD_FLAGS_REPLACE_HISTORY);
     if (!addToSHistory) {
-      // Replace current entry in session history.
+      // Replace current entry in session history; If the requested index is
+      // valid, it indicates the loading was triggered by a history load, and
+      // we should replace the entry at requested index instead.
       int32_t index = 0;
-      mSessionHistory->GetIndex(&index);
+      mSessionHistory->GetRequestedIndex(&index);
+      if (index == -1) {
+        mSessionHistory->GetIndex(&index);
+      }
       nsCOMPtr<nsISHistoryInternal> shPrivate =
         do_QueryInterface(mSessionHistory);
       // Replace the current entry with the new entry

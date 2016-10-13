@@ -116,6 +116,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "Snackbars", "resource://gre/modules/Sna
 
 XPCOMUtils.defineLazyModuleGetter(this, "RuntimePermissions", "resource://gre/modules/RuntimePermissions.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "WebsiteMetadata", "resource://gre/modules/WebsiteMetadata.jsm");
+
 XPCOMUtils.defineLazyServiceGetter(this, "FontEnumerator",
   "@mozilla.org/gfx/fontenumerator;1",
   "nsIFontEnumerator");
@@ -131,7 +133,7 @@ var lazilyLoadedBrowserScripts = [
   ["CastingApps", "chrome://browser/content/CastingApps.js"],
   ["RemoteDebugger", "chrome://browser/content/RemoteDebugger.js"],
 ];
-if (!AppConstants.RELEASE_BUILD) {
+if (!AppConstants.RELEASE_OR_BETA) {
   lazilyLoadedBrowserScripts.push(
     ["WebcompatReporter", "chrome://browser/content/WebcompatReporter.js"]);
 }
@@ -152,7 +154,6 @@ var lazilyLoadedObserverScripts = [
   ["PermissionsHelper", ["Permissions:Check", "Permissions:Get", "Permissions:Clear"], "chrome://browser/content/PermissionsHelper.js"],
   ["FeedHandler", ["Feeds:Subscribe"], "chrome://browser/content/FeedHandler.js"],
   ["Feedback", ["Feedback:Show"], "chrome://browser/content/Feedback.js"],
-  ["SelectionHandler", ["TextSelection:Get"], "chrome://browser/content/SelectionHandler.js"],
   ["EmbedRT", ["GeckoView:ImportScript"], "chrome://browser/content/EmbedRT.js"],
   ["Reader", ["Reader:AddToCache", "Reader:RemoveFromCache"], "chrome://browser/content/Reader.js"],
   ["PrintHelper", ["Print:PDF"], "chrome://browser/content/PrintHelper.js"],
@@ -429,13 +430,6 @@ var BrowserApp = {
     SearchEngines.init();
     Experiments.init();
 
-    if ("arguments" in window) {
-      if (window.arguments[0])
-        gScreenWidth = window.arguments[0];
-      if (window.arguments[1])
-        gScreenHeight = window.arguments[1];
-    }
-
     // XXX maybe we don't do this if the launch was kicked off from external
     Services.io.offline = false;
 
@@ -519,7 +513,7 @@ var BrowserApp = {
       InitLater(() => Services.obs.notifyObservers(window, "browser-delayed-startup-finished", ""));
       InitLater(() => Messaging.sendRequest({ type: "Gecko:DelayedStartup" }));
 
-      if (!AppConstants.RELEASE_BUILD) {
+      if (!AppConstants.RELEASE_OR_BETA) {
         InitLater(() => WebcompatReporter.init());
       }
 
@@ -1051,7 +1045,7 @@ var BrowserApp = {
   // off to the compositor.
   isBrowserContentDocumentDisplayed: function() {
     try {
-      if (!Services.androidBridge.isContentDocumentDisplayed())
+      if (!Services.androidBridge.isContentDocumentDisplayed(window))
         return false;
     } catch (e) {
       return false;
@@ -1065,7 +1059,7 @@ var BrowserApp = {
 
   contentDocumentChanged: function() {
     window.top.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils).isFirstPaint = true;
-    Services.androidBridge.contentDocumentChanged();
+    Services.androidBridge.contentDocumentChanged(window);
   },
 
   get tabs() {
@@ -2685,28 +2679,6 @@ var NativeWindow = {
       this.menus = null;
       Services.obs.notifyObservers(
         {target: this._target, x: event.clientX, y: event.clientY}, "context-menu-not-shown", "");
-
-      if (SelectionHandler.canSelect(this._target)) {
-        // If textSelection WORD is successful,
-        // consume / preventDefault the context menu event.
-        let selectionResult = SelectionHandler.startSelection(this._target,
-          { mode: SelectionHandler.SELECT_AT_POINT,
-            x: event.clientX,
-            y: event.clientY
-          }
-        );
-        if (selectionResult === SelectionHandler.ERROR_NONE) {
-          event.preventDefault();
-          return;
-        }
-
-        // If textSelection caret-attachment is successful,
-        // consume / preventDefault the context menu event.
-        if (SelectionHandler.attachCaret(this._target) === SelectionHandler.ERROR_NONE) {
-          event.preventDefault();
-          return;
-        }
-      }
     },
 
     // Returns a title for a context menu. If no title attribute exists, will fall back to looking for a url
@@ -3362,11 +3334,6 @@ nsBrowserAccess.prototype = {
 };
 
 
-// track the last known screen size so that new tabs
-// get created with the right size rather than being 1x1
-var gScreenWidth = 1;
-var gScreenHeight = 1;
-
 function Tab(aURL, aParams) {
   this.filter = null;
   this.browser = null;
@@ -3697,24 +3664,6 @@ Tab.prototype = {
     return this.browser.docShellIsActive;
   },
 
-  setScrollClampingSize: function(zoom) {
-    let viewportWidth = gScreenWidth / zoom;
-    let viewportHeight = gScreenHeight / zoom;
-    let screenWidth = gScreenWidth;
-    let screenHeight = gScreenHeight;
-
-    // Make sure the aspect ratio of the screen is maintained when setting
-    // the clamping scroll-port size.
-    let factor = Math.min(viewportWidth / screenWidth,
-                          viewportHeight / screenHeight);
-    let scrollPortWidth = screenWidth * factor;
-    let scrollPortHeight = screenHeight * factor;
-
-    let win = this.browser.contentWindow;
-    win.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils).
-        setScrollPositionClampingScrollPortSize(scrollPortWidth, scrollPortHeight);
-  },
-
   // These constants are used to prioritize high quality metadata over low quality data, so that
   // we can collect data as we find meta tags, and replace low quality metadata with higher quality
   // matches. For instance a msApplicationTile icon is a better tile image than an og:image tag.
@@ -3930,6 +3879,11 @@ Tab.prototype = {
 
           this.browser.addEventListener("pagehide", listener, true);
         }
+
+        if (AppConstants.NIGHTLY_BUILD || AppConstants.MOZ_ANDROID_ACTIVITY_STREAM) {
+          WebsiteMetadata.parseAsynchronously(this.browser.contentDocument);
+        }
+
         break;
       }
 
@@ -4607,21 +4561,7 @@ var BrowserEventHandler = {
         break;
 
       case "Gesture:SingleTap": {
-        let focusedElement = null;
-        try {
-          // If the element was previously focused, show the caret attached to it.
-          let element = this._highlightElement;
-          focusedElement = BrowserApp.getFocusedInput(BrowserApp.selectedBrowser);
-          if (element && element == focusedElement) {
-            let result = SelectionHandler.attachCaret(element);
-            if (result !== SelectionHandler.ERROR_NONE) {
-              dump("Unexpected failure during caret attach: " + result);
-            }
-          }
-        } catch(e) {
-          Cu.reportError(e);
-        }
-
+        let focusedElement = BrowserApp.getFocusedInput(BrowserApp.selectedBrowser);
         let data = JSON.parse(aData);
         let {x, y} = data;
 
@@ -5615,22 +5555,7 @@ var ViewportHandler = {
   },
 
   observe: function(aSubject, aTopic, aData) {
-    switch (aTopic) {
-      case "Window:Resize":
-        if (window.outerWidth == gScreenWidth && window.outerHeight == gScreenHeight)
-          break;
-        if (window.outerWidth == 0 || window.outerHeight == 0)
-          break;
-
-        gScreenWidth = window.outerWidth * window.devicePixelRatio;
-        gScreenHeight = window.outerHeight * window.devicePixelRatio;
-        let tabs = BrowserApp.tabs;
-        break;
-      default:
-        return;
-    }
-
-    if (aData) {
+    if (aTopic == "Window:Resize" && aData) {
       let scrollChange = JSON.parse(aData);
       let windowUtils = window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
       windowUtils.setNextPaintSyncId(scrollChange.id);

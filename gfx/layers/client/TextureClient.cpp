@@ -1071,7 +1071,6 @@ TextureClient::CreateForDrawing(TextureForwarder* aAllocator,
   gfx::BackendType moz2DBackend = BackendTypeForBackendSelector(aLayersBackend, aSelector);
 
   // also test the validity of aAllocator
-  MOZ_ASSERT(aAllocator && aAllocator->IPCOpen());
   if (!aAllocator || !aAllocator->IPCOpen()) {
     return nullptr;
   }
@@ -1089,7 +1088,8 @@ TextureClient::CreateForDrawing(TextureForwarder* aAllocator,
        (!!(aAllocFlags & ALLOC_FOR_OUT_OF_BAND_CONTENT) &&
         DeviceManagerDx::Get()->GetContentDevice())) &&
       aSize.width <= aMaxTextureSize &&
-      aSize.height <= aMaxTextureSize)
+      aSize.height <= aMaxTextureSize &&
+      !(aAllocFlags & ALLOC_UPDATE_FROM_SURFACE))
   {
     data = DXGITextureData::Create(aSize, aFormat, aAllocFlags);
   }
@@ -1168,7 +1168,6 @@ TextureClient::CreateFromSurface(KnowsCompositor* aAllocator,
                                  TextureAllocationFlags aAllocFlags)
 {
   // also test the validity of aAllocator
-  MOZ_ASSERT(aAllocator && aAllocator->GetTextureForwarder()->IPCOpen());
   if (!aAllocator || !aAllocator->GetTextureForwarder()->IPCOpen()) {
     return nullptr;
   }
@@ -1204,8 +1203,9 @@ TextureClient::CreateFromSurface(KnowsCompositor* aAllocator,
 
   // Fall back to using UpdateFromSurface
 
+  TextureAllocationFlags allocFlags = TextureAllocationFlags(aAllocFlags | ALLOC_UPDATE_FROM_SURFACE);
   RefPtr<TextureClient> client = CreateForDrawing(aAllocator, aSurface->GetFormat(), size,
-                                                  aSelector, aTextureFlags, aAllocFlags);
+                                                  aSelector, aTextureFlags, allocFlags);
   if (!client) {
     return nullptr;
   }
@@ -1280,6 +1280,7 @@ TextureClient::CreateForYCbCr(KnowsCompositor* aAllocator,
                               gfx::IntSize aYSize,
                               gfx::IntSize aCbCrSize,
                               StereoMode aStereoMode,
+                              YUVColorSpace aYUVColorSpace,
                               TextureFlags aTextureFlags)
 {
   // The only reason we allow aAllocator to be null is for gtests
@@ -1293,7 +1294,8 @@ TextureClient::CreateForYCbCr(KnowsCompositor* aAllocator,
   }
 
   TextureData* data = BufferTextureData::CreateForYCbCr(aAllocator, aYSize, aCbCrSize,
-                                                        aStereoMode, aTextureFlags);
+                                                        aStereoMode, aYUVColorSpace,
+                                                        aTextureFlags);
   if (!data) {
     return nullptr;
   }
@@ -1306,6 +1308,7 @@ TextureClient::CreateForYCbCr(KnowsCompositor* aAllocator,
 already_AddRefed<TextureClient>
 TextureClient::CreateForYCbCrWithBufferSize(KnowsCompositor* aAllocator,
                                             size_t aSize,
+                                            YUVColorSpace aYUVColorSpace,
                                             TextureFlags aTextureFlags)
 {
   // also test the validity of aAllocator
@@ -1315,7 +1318,7 @@ TextureClient::CreateForYCbCrWithBufferSize(KnowsCompositor* aAllocator,
   }
 
   TextureData* data =
-    BufferTextureData::CreateForYCbCrWithBufferSize(aAllocator, aSize,
+    BufferTextureData::CreateForYCbCrWithBufferSize(aAllocator, aSize, aYUVColorSpace,
                                                     aTextureFlags);
   if (!data) {
     return nullptr;

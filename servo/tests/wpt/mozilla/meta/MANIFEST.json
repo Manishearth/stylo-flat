@@ -2420,6 +2420,30 @@
             "url": "/_mozilla/css/inline_absolute_hypothetical_clip_a.html"
           }
         ],
+        "css/inline_absolute_hypothetical_line_metrics_a.html": [
+          {
+            "path": "css/inline_absolute_hypothetical_line_metrics_a.html",
+            "references": [
+              [
+                "/_mozilla/css/inline_absolute_hypothetical_line_metrics_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/inline_absolute_hypothetical_line_metrics_a.html"
+          }
+        ],
+        "css/inline_absolute_hypothetical_metrics_a.html": [
+          {
+            "path": "css/inline_absolute_hypothetical_metrics_a.html",
+            "references": [
+              [
+                "/_mozilla/css/inline_absolute_hypothetical_metrics_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/inline_absolute_hypothetical_metrics_a.html"
+          }
+        ],
         "css/inline_absolute_out_of_flow_a.html": [
           {
             "path": "css/inline_absolute_out_of_flow_a.html",
@@ -2502,6 +2526,18 @@
               ]
             ],
             "url": "/_mozilla/css/inline_block_border_intrinsic_size_a.html"
+          }
+        ],
+        "css/inline_block_centering_a.html": [
+          {
+            "path": "css/inline_block_centering_a.html",
+            "references": [
+              [
+                "/_mozilla/css/inline_block_centering_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/inline_block_centering_a.html"
           }
         ],
         "css/inline_block_height_with_out_of_flow_child_a.html": [
@@ -5664,6 +5700,18 @@
             "url": "/_mozilla/css/vertical_align_inside_table_a.html"
           }
         ],
+        "css/vertical_align_middle_a.html": [
+          {
+            "path": "css/vertical_align_middle_a.html",
+            "references": [
+              [
+                "/_mozilla/css/vertical_align_middle_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/vertical_align_middle_a.html"
+          }
+        ],
         "css/vertical_align_sub_a.html": [
           {
             "path": "css/vertical_align_sub_a.html",
@@ -6268,6 +6316,18 @@
               ]
             ],
             "url": "/_mozilla/mozilla/sslfail.html"
+          }
+        ],
+        "mozilla/svg/svg.html": [
+          {
+            "path": "mozilla/svg/svg.html",
+            "references": [
+              [
+                "/_mozilla/mozilla/svg/svg_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/mozilla/svg/svg.html"
           }
         ],
         "mozilla/table_valign_bottom.html": [
@@ -16142,6 +16202,30 @@
           "url": "/_mozilla/css/inline_absolute_hypothetical_clip_a.html"
         }
       ],
+      "css/inline_absolute_hypothetical_line_metrics_a.html": [
+        {
+          "path": "css/inline_absolute_hypothetical_line_metrics_a.html",
+          "references": [
+            [
+              "/_mozilla/css/inline_absolute_hypothetical_line_metrics_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/inline_absolute_hypothetical_line_metrics_a.html"
+        }
+      ],
+      "css/inline_absolute_hypothetical_metrics_a.html": [
+        {
+          "path": "css/inline_absolute_hypothetical_metrics_a.html",
+          "references": [
+            [
+              "/_mozilla/css/inline_absolute_hypothetical_metrics_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/inline_absolute_hypothetical_metrics_a.html"
+        }
+      ],
       "css/inline_absolute_out_of_flow_a.html": [
         {
           "path": "css/inline_absolute_out_of_flow_a.html",
@@ -16224,6 +16308,18 @@
             ]
           ],
           "url": "/_mozilla/css/inline_block_border_intrinsic_size_a.html"
+        }
+      ],
+      "css/inline_block_centering_a.html": [
+        {
+          "path": "css/inline_block_centering_a.html",
+          "references": [
+            [
+              "/_mozilla/css/inline_block_centering_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/inline_block_centering_a.html"
         }
       ],
       "css/inline_block_height_with_out_of_flow_child_a.html": [
@@ -19386,6 +19482,18 @@
           "url": "/_mozilla/css/vertical_align_inside_table_a.html"
         }
       ],
+      "css/vertical_align_middle_a.html": [
+        {
+          "path": "css/vertical_align_middle_a.html",
+          "references": [
+            [
+              "/_mozilla/css/vertical_align_middle_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/vertical_align_middle_a.html"
+        }
+      ],
       "css/vertical_align_sub_a.html": [
         {
           "path": "css/vertical_align_sub_a.html",
@@ -19990,6 +20098,18 @@
             ]
           ],
           "url": "/_mozilla/mozilla/sslfail.html"
+        }
+      ],
+      "mozilla/svg/svg.html": [
+        {
+          "path": "mozilla/svg/svg.html",
+          "references": [
+            [
+              "/_mozilla/mozilla/svg/svg_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/mozilla/svg/svg.html"
         }
       ],
       "mozilla/table_valign_bottom.html": [

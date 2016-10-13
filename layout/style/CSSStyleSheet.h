@@ -57,13 +57,8 @@ class CSSRuleList;
 // CSS Style Sheet Inner Data Container
 //
 
-class CSSStyleSheetInner : public StyleSheetInfo
+struct CSSStyleSheetInner : public StyleSheetInfo
 {
-public:
-  friend class mozilla::CSSStyleSheet;
-  friend class ::nsCSSRuleProcessor;
-
-private:
   CSSStyleSheetInner(CSSStyleSheet* aPrimarySheet,
                      CORSMode aCORSMode,
                      ReferrerPolicy aReferrerPolicy,
@@ -251,14 +246,14 @@ public:
   // called GetOwnerRule because that would be ambiguous with the ImportRule
   // version.
   nsIDOMCSSRule* GetDOMOwnerRule() const;
-  dom::CSSRuleList* GetCssRules(const Maybe<nsIPrincipal*>& aSubjectPrincipal,
+  dom::CSSRuleList* GetCssRules(nsIPrincipal& aSubjectPrincipal,
                                 ErrorResult& aRv);
   uint32_t InsertRule(const nsAString& aRule, uint32_t aIndex,
-                      const Maybe<nsIPrincipal*>& aSubjectPrincipal,
+                      nsIPrincipal& aSubjectPrincipal,
                       ErrorResult& aRv);
 
   void DeleteRule(uint32_t aIndex,
-                  const Maybe<nsIPrincipal*>& aSubjectPrincipal,
+                  nsIPrincipal& aSubjectPrincipal,
                   ErrorResult& aRv);
 
   // WebIDL miscellaneous bits
@@ -296,7 +291,7 @@ protected:
   // inner, error otherwise.  This will also succeed if the subject has
   // UniversalXPConnect or if access is allowed by CORS.  In the latter case,
   // it will set the principal of the inner to the subject principal.
-  void SubjectSubsumesInnerPrincipal(const Maybe<nsIPrincipal*>& aSubjectPrincipal,
+  void SubjectSubsumesInnerPrincipal(nsIPrincipal& aSubjectPrincipal,
                                      ErrorResult& aRv);
 
   // Add the namespace mapping from this @namespace rule to our namespace map

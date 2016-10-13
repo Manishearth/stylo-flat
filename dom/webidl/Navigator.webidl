@@ -283,12 +283,6 @@ partial interface Navigator {
 };
 
 partial interface Navigator {
-  [Throws, Pref="dom.cellbroadcast.enabled", ChromeOnly,
-   UnsafeInPrerendering]
-  readonly attribute MozCellBroadcast mozCellBroadcast;
-};
-
-partial interface Navigator {
   [Throws, Pref="dom.voicemail.enabled", ChromeOnly,
    UnsafeInPrerendering]
   readonly attribute MozVoicemail mozVoicemail;
@@ -332,13 +326,6 @@ partial interface Navigator {
   readonly attribute BluetoothManager mozBluetooth;
 };
 #endif // MOZ_B2G_BT
-
-#ifdef MOZ_B2G_FM
-partial interface Navigator {
-  [Throws, ChromeOnly, UnsafeInPrerendering]
-  readonly attribute FMRadio mozFMRadio;
-};
-#endif // MOZ_B2G_FM
 
 #ifdef MOZ_TIME_MANAGER
 // nsIDOMMozNavigatorTime

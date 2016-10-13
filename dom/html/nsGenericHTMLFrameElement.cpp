@@ -79,13 +79,14 @@ nsresult
 nsGenericHTMLFrameElement::GetContentDocument(nsIDOMDocument** aContentDocument)
 {
   NS_PRECONDITION(aContentDocument, "Null out param");
-  nsCOMPtr<nsIDOMDocument> document = do_QueryInterface(GetContentDocument());
+  nsCOMPtr<nsIDOMDocument> document =
+    do_QueryInterface(GetContentDocument(*nsContentUtils::SubjectPrincipal()));
   document.forget(aContentDocument);
   return NS_OK;
 }
 
 nsIDocument*
-nsGenericHTMLFrameElement::GetContentDocument()
+nsGenericHTMLFrameElement::GetContentDocument(nsIPrincipal& aSubjectPrincipal)
 {
   nsCOMPtr<nsPIDOMWindowOuter> win = GetContentWindow();
   if (!win) {
@@ -98,8 +99,7 @@ nsGenericHTMLFrameElement::GetContentDocument()
   }
 
   // Return null for cross-origin contentDocument.
-  if (!nsContentUtils::SubjectPrincipal()->
-        SubsumesConsideringDomain(doc->NodePrincipal())) {
+  if (!aSubjectPrincipal.SubsumesConsideringDomain(doc->NodePrincipal())) {
     return nullptr;
   }
   return doc;

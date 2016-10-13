@@ -12,7 +12,6 @@ use dom::bindings::codegen::Bindings::HTMLFormElementBinding::HTMLFormElementMet
 use dom::bindings::codegen::Bindings::HTMLInputElementBinding::HTMLInputElementMethods;
 use dom::bindings::codegen::Bindings::HTMLTextAreaElementBinding::HTMLTextAreaElementMethods;
 use dom::bindings::conversions::DerivedFrom;
-use dom::bindings::global::GlobalRef;
 use dom::bindings::inheritance::{Castable, ElementTypeId, HTMLElementTypeId, NodeTypeId};
 use dom::bindings::js::{JS, MutNullableHeap, Root};
 use dom::bindings::refcounted::Trusted;
@@ -24,6 +23,7 @@ use dom::element::Element;
 use dom::event::{EventBubbles, EventCancelable};
 use dom::eventtarget::EventTarget;
 use dom::file::File;
+use dom::globalscope::GlobalScope;
 use dom::htmlbuttonelement::HTMLButtonElement;
 use dom::htmlcollection::CollectionFilter;
 use dom::htmldatalistelement::HTMLDataListElement;
@@ -203,7 +203,8 @@ impl HTMLFormElementMethods for HTMLFormElement {
                                 elem.downcast::<HTMLTextAreaElement>().unwrap().form_owner()
                             }
                             _ => {
-                                debug_assert!(!elem.downcast::<HTMLElement>().unwrap().is_listed_element());
+                                debug_assert!(!elem.downcast::<HTMLElement>().unwrap().is_listed_element() ||
+                                              elem.local_name() == &atom!("keygen"));
                                 return false;
                             }
                         }
@@ -219,7 +220,7 @@ impl HTMLFormElementMethods for HTMLFormElement {
         }
         let filter = box ElementsFilter { form: Root::from_ref(self) };
         let window = window_from_node(self);
-        let elements = HTMLFormControlsCollection::new(window.r(), self.upcast(), filter);
+        let elements = HTMLFormControlsCollection::new(&window, self.upcast(), filter);
         self.elements.set(Some(&elements));
         elements
     }
@@ -435,14 +436,14 @@ impl HTMLFormElement {
         // Step 2
         let nav = box PlannedNavigation {
             load_data: load_data,
-            pipeline_id: window.pipeline_id(),
+            pipeline_id: window.upcast::<GlobalScope>().pipeline_id(),
             script_chan: window.main_thread_script_chan().clone(),
             generation_id: self.generation_id.get(),
             form: Trusted::new(self)
         };
 
         // Step 3
-        window.dom_manipulation_task_source().queue(nav, GlobalRef::Window(&window)).unwrap();
+        window.dom_manipulation_task_source().queue(nav, window.upcast()).unwrap();
     }
 
     /// Interactively validate the constraints of form elements
@@ -705,11 +706,11 @@ pub enum FormSubmittableElement {
 impl FormSubmittableElement {
     fn as_event_target(&self) -> &EventTarget {
         match *self {
-            FormSubmittableElement::ButtonElement(ref button) => button.r().upcast(),
-            FormSubmittableElement::InputElement(ref input) => input.r().upcast(),
-            FormSubmittableElement::ObjectElement(ref object) => object.r().upcast(),
-            FormSubmittableElement::SelectElement(ref select) => select.r().upcast(),
-            FormSubmittableElement::TextAreaElement(ref textarea) => textarea.r().upcast()
+            FormSubmittableElement::ButtonElement(ref button) => button.upcast(),
+            FormSubmittableElement::InputElement(ref input) => input.upcast(),
+            FormSubmittableElement::ObjectElement(ref object) => object.upcast(),
+            FormSubmittableElement::SelectElement(ref select) => select.upcast(),
+            FormSubmittableElement::TextAreaElement(ref textarea) => textarea.upcast()
         }
     }
 }
@@ -847,7 +848,7 @@ pub trait FormControl: DerivedFrom<Element> + Reflectable {
         if self.to_element().has_attribute(attr) {
             input(self)
         } else {
-            self.form_owner().map_or(DOMString::new(), |t| owner(t.r()))
+            self.form_owner().map_or(DOMString::new(), |t| owner(&t))
         }
     }
 
@@ -862,7 +863,7 @@ pub trait FormControl: DerivedFrom<Element> + Reflectable {
         if self.to_element().has_attribute(attr) {
             input(self)
         } else {
-            self.form_owner().map_or(false, |t| owner(t.r()))
+            self.form_owner().map_or(false, |t| owner(&t))
         }
     }
 

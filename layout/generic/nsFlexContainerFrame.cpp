@@ -106,9 +106,11 @@ IsLegacyBox(const nsStyleDisplay* aStyleDisp,
   if (aStyleDisp->mDisplay == mozilla::StyleDisplay::Block) {
     nsStyleContext* parentStyleContext = aStyleContext->GetParent();
     NS_ASSERTION(parentStyleContext &&
-                 aStyleContext->GetPseudo() == nsCSSAnonBoxes::scrolledContent,
+                 (aStyleContext->GetPseudo() == nsCSSAnonBoxes::buttonContent ||
+                  aStyleContext->GetPseudo() == nsCSSAnonBoxes::scrolledContent),
                  "The only way a nsFlexContainerFrame can have 'display:block' "
-                 "should be if it's the inner part of a scrollable element");
+                 "should be if it's the inner part of a scrollable or button "
+                 "element");
     if (IsDisplayValueLegacyBox(parentStyleContext->StyleDisplay())) {
       return true;
     }
@@ -2130,6 +2132,15 @@ nsFlexContainerFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
+nscoord
+nsFlexContainerFrame::GetLogicalBaseline(mozilla::WritingMode aWM) const
+{
+  NS_ASSERTION(mBaselineFromLastReflow != NS_INTRINSIC_WIDTH_UNKNOWN,
+               "baseline has not been set");
+
+  return mBaselineFromLastReflow;
+}
+
 // Helper for BuildDisplayList, to implement this special-case for flex items
 // from the spec:
 //    Flex items paint exactly the same as block-level elements in the
@@ -2605,6 +2616,23 @@ MainAxisPositionTracker::
     }
   }
 
+  // Map 'left'/'right' to 'start'/'end'
+  if (mJustifyContent == NS_STYLE_ALIGN_LEFT ||
+      mJustifyContent == NS_STYLE_ALIGN_RIGHT) {
+    if (aAxisTracker.IsColumnOriented()) {
+      // Container's alignment axis is not parallel to the inline axis,
+      // so we map both 'left' and 'right' to 'start'.
+      mJustifyContent = NS_STYLE_ALIGN_START;
+    } else {
+      // Row-oriented, so we map 'left' and 'right' to 'start' or 'end',
+      // depending on left-to-right writing mode.
+      const bool isLTR = aAxisTracker.GetWritingMode().IsBidiLTR();
+      const bool isAlignLeft = (mJustifyContent == NS_STYLE_ALIGN_LEFT);
+      mJustifyContent = (isAlignLeft == isLTR) ? NS_STYLE_ALIGN_START
+                                               : NS_STYLE_ALIGN_END;
+    }
+  }
+
   // Map 'start'/'end' to 'flex-start'/'flex-end'.
   if (mJustifyContent == NS_STYLE_JUSTIFY_START) {
     mJustifyContent = NS_STYLE_JUSTIFY_FLEX_START;
@@ -2628,8 +2656,6 @@ MainAxisPositionTracker::
       mPackingSpaceRemaining != 0 &&
       !aLine->IsEmpty()) {
     switch (mJustifyContent) {
-      case NS_STYLE_JUSTIFY_LEFT:
-      case NS_STYLE_JUSTIFY_RIGHT:
       case NS_STYLE_JUSTIFY_BASELINE:
       case NS_STYLE_JUSTIFY_LAST_BASELINE:
       case NS_STYLE_JUSTIFY_SPACE_EVENLY:
@@ -2743,7 +2769,7 @@ CrossAxisPositionTracker::
                     aAxisTracker.IsCrossAxisReversed()),
     mPackingSpaceRemaining(0),
     mNumPackingSpacesRemaining(0),
-    mAlignContent(aReflowInput.mStylePosition->ComputedAlignContent())
+    mAlignContent(aReflowInput.mStylePosition->mAlignContent)
 {
   MOZ_ASSERT(aFirstLine, "null first line pointer");
 
@@ -2805,6 +2831,23 @@ CrossAxisPositionTracker::
     }
   }
 
+  // Map 'left'/'right' to 'start'/'end'
+  if (mAlignContent == NS_STYLE_ALIGN_LEFT ||
+      mAlignContent == NS_STYLE_ALIGN_RIGHT) {
+    if (aAxisTracker.IsRowOriented()) {
+      // Container's alignment axis is not parallel to the inline axis,
+      // so we map both 'left' and 'right' to 'start'.
+      mAlignContent = NS_STYLE_ALIGN_START;
+    } else {
+      // Column-oriented, so we map 'left' and 'right' to 'start' or 'end',
+      // depending on left-to-right writing mode.
+      const bool isLTR = aAxisTracker.GetWritingMode().IsBidiLTR();
+      const bool isAlignLeft = (mAlignContent == NS_STYLE_ALIGN_LEFT);
+      mAlignContent = (isAlignLeft == isLTR) ? NS_STYLE_ALIGN_START
+                                             : NS_STYLE_ALIGN_END;
+    }
+  }
+
   // Map 'start'/'end' to 'flex-start'/'flex-end'.
   if (mAlignContent == NS_STYLE_ALIGN_START) {
     mAlignContent = NS_STYLE_ALIGN_FLEX_START;
@@ -2826,8 +2869,6 @@ CrossAxisPositionTracker::
   // past any leading packing-space.
   if (mPackingSpaceRemaining != 0) {
     switch (mAlignContent) {
-      case NS_STYLE_JUSTIFY_LEFT:
-      case NS_STYLE_JUSTIFY_RIGHT:
       case NS_STYLE_ALIGN_SELF_START:
       case NS_STYLE_ALIGN_SELF_END:
       case NS_STYLE_ALIGN_SPACE_EVENLY:
@@ -3097,6 +3138,22 @@ SingleLineCrossAxisPositionTracker::
     alignSelf = NS_STYLE_ALIGN_FLEX_START;
   }
 
+  // Map 'left'/'right' to 'start'/'end'
+  if (alignSelf == NS_STYLE_ALIGN_LEFT || alignSelf == NS_STYLE_ALIGN_RIGHT) {
+    if (aAxisTracker.IsRowOriented()) {
+      // Container's alignment axis is not parallel to the inline axis,
+      // so we map both 'left' and 'right' to 'start'.
+      alignSelf = NS_STYLE_ALIGN_START;
+    } else {
+      // Column-oriented, so we map 'left' and 'right' to 'start' or 'end',
+      // depending on left-to-right writing mode.
+      const bool isLTR = aAxisTracker.GetWritingMode().IsBidiLTR();
+      const bool isAlignLeft = (alignSelf == NS_STYLE_ALIGN_LEFT);
+      alignSelf = (isAlignLeft == isLTR) ? NS_STYLE_ALIGN_START
+                                         : NS_STYLE_ALIGN_END;
+    }
+  }
+
   // Map 'start'/'end' to 'flex-start'/'flex-end'.
   if (alignSelf == NS_STYLE_ALIGN_START) {
     alignSelf = NS_STYLE_ALIGN_FLEX_START;
@@ -3115,8 +3172,6 @@ SingleLineCrossAxisPositionTracker::
   }
 
   switch (alignSelf) {
-    case NS_STYLE_JUSTIFY_LEFT:
-    case NS_STYLE_JUSTIFY_RIGHT:
     case NS_STYLE_ALIGN_SELF_START:
     case NS_STYLE_ALIGN_SELF_END:
     case NS_STYLE_ALIGN_LAST_BASELINE:
@@ -4067,7 +4122,7 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
   const auto justifyContent = IsLegacyBox(aReflowInput.mStyleDisplay,
                                           mStyleContext) ?
     ConvertLegacyStyleToJustifyContent(StyleXUL()) :
-    aReflowInput.mStylePosition->ComputedJustifyContent();
+    aReflowInput.mStylePosition->mJustifyContent;
 
   for (FlexLine* line = lines.getFirst(); line; line = line->getNext()) {
     // Main-Axis Alignment - Flexbox spec section 9.5
@@ -4217,6 +4272,9 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
   // XXXdholbert flexContainerAscent needs to be in terms of
   // our parent's writing-mode here. See bug 1155322.
   aDesiredSize.SetBlockStartAscent(flexContainerAscent);
+
+  // Cache this baseline for use outside of this call.
+  mBaselineFromLastReflow = flexContainerAscent;
 
   // Now: If we're complete, add bottom border/padding to desired height (which
   // we skipped via skipSides) -- unless that pushes us over available height,

@@ -336,165 +336,6 @@ nsNSSCertificate::GetKeyUsages(nsAString& text)
   return NS_OK;
 }
 
-nsresult
-nsNSSCertificate::FormatUIStrings(const nsAutoString& nickname,
-                                  nsAutoString& nickWithSerial,
-                                  nsAutoString& details)
-{
-  if (!NS_IsMainThread()) {
-    NS_ERROR("nsNSSCertificate::FormatUIStrings called off the main thread");
-    return NS_ERROR_NOT_SAME_THREAD;
-  }
-
-  nsresult rv = NS_OK;
-
-  nsCOMPtr<nsINSSComponent> nssComponent(do_GetService(kNSSComponentCID, &rv));
-
-  if (NS_FAILED(rv) || !nssComponent) {
-    return NS_ERROR_FAILURE;
-  }
-
-  nsAutoString info;
-  nsAutoString temp1;
-
-  nickWithSerial.Append(nickname);
-
-  if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertInfoIssuedFor", info))) {
-    details.Append(info);
-    details.Append(char16_t(' '));
-    if (NS_SUCCEEDED(GetSubjectName(temp1)) && !temp1.IsEmpty()) {
-      details.Append(temp1);
-    }
-    details.Append(char16_t('\n'));
-  }
-
-  if (NS_SUCCEEDED(GetSerialNumber(temp1)) && !temp1.IsEmpty()) {
-    details.AppendLiteral("  ");
-    if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertDumpSerialNo", info))) {
-      details.Append(info);
-      details.AppendLiteral(": ");
-    }
-    details.Append(temp1);
-
-    nickWithSerial.AppendLiteral(" [");
-    nickWithSerial.Append(temp1);
-    nickWithSerial.Append(char16_t(']'));
-
-    details.Append(char16_t('\n'));
-  }
-
-  nsCOMPtr<nsIX509CertValidity> validity;
-  rv = GetValidity(getter_AddRefs(validity));
-  if (NS_SUCCEEDED(rv) && validity) {
-    details.AppendLiteral("  ");
-    if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertInfoValid", info))) {
-      details.Append(info);
-    }
-
-    if (NS_SUCCEEDED(validity->GetNotBeforeLocalTime(temp1)) && !temp1.IsEmpty()) {
-      details.Append(char16_t(' '));
-      if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertInfoFrom", info))) {
-        details.Append(info);
-        details.Append(char16_t(' '));
-      }
-      details.Append(temp1);
-    }
-
-    if (NS_SUCCEEDED(validity->GetNotAfterLocalTime(temp1)) && !temp1.IsEmpty()) {
-      details.Append(char16_t(' '));
-      if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertInfoTo", info))) {
-        details.Append(info);
-        details.Append(char16_t(' '));
-      }
-      details.Append(temp1);
-    }
-
-    details.Append(char16_t('\n'));
-  }
-
-  if (NS_SUCCEEDED(GetKeyUsages(temp1)) && !temp1.IsEmpty()) {
-    details.AppendLiteral("  ");
-    if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertDumpKeyUsage", info))) {
-      details.Append(info);
-      details.AppendLiteral(": ");
-    }
-    details.Append(temp1);
-    details.Append(char16_t('\n'));
-  }
-
-  nsAutoString firstEmail;
-  const char* aWalkAddr;
-  for (aWalkAddr = CERT_GetFirstEmailAddress(mCert.get())
-        ;
-        aWalkAddr
-        ;
-        aWalkAddr = CERT_GetNextEmailAddress(mCert.get(), aWalkAddr))
-  {
-    NS_ConvertUTF8toUTF16 email(aWalkAddr);
-    if (email.IsEmpty())
-      continue;
-
-    if (firstEmail.IsEmpty()) {
-      // If the first email address from the subject DN is also present
-      // in the subjectAltName extension, GetEmailAddresses() will return
-      // it twice (as received from NSS). Remember the first address so that
-      // we can filter out duplicates later on.
-      firstEmail = email;
-
-      details.AppendLiteral("  ");
-      if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertInfoEmail", info))) {
-        details.Append(info);
-        details.AppendLiteral(": ");
-      }
-      details.Append(email);
-    }
-    else {
-      // Append current address if it's different from the first one.
-      if (!firstEmail.Equals(email)) {
-        details.AppendLiteral(", ");
-        details.Append(email);
-      }
-    }
-  }
-
-  if (!firstEmail.IsEmpty()) {
-    // We got at least one email address, so we want a newline
-    details.Append(char16_t('\n'));
-  }
-
-  if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertInfoIssuedBy", info))) {
-    details.Append(info);
-    details.Append(char16_t(' '));
-
-    if (NS_SUCCEEDED(GetIssuerName(temp1)) && !temp1.IsEmpty()) {
-      details.Append(temp1);
-    }
-
-    details.Append(char16_t('\n'));
-  }
-
-  if (NS_SUCCEEDED(nssComponent->GetPIPNSSBundleString("CertInfoStoredIn", info))) {
-    details.Append(info);
-    details.Append(char16_t(' '));
-
-    if (NS_SUCCEEDED(GetTokenName(temp1)) && !temp1.IsEmpty()) {
-      details.Append(temp1);
-    }
-  }
-
-  // the above produces the following output:
-  //
-  //   Issued to: $subjectName
-  //   Serial number: $serialNumber
-  //   Valid from: $starting_date to $expiration_date
-  //   Certificate Key usage: $usages
-  //   Email: $address(es)
-  //   Issued by: $issuerName
-  //   Stored in: $token
-
-  return rv;
-}
-
 NS_IMETHODIMP
 nsNSSCertificate::GetDbKey(nsACString& aDbKey)
 {
@@ -840,7 +681,8 @@ nsNSSCertificate::GetChain(nsIArray** _rvChain)
                                nullptr, /*XXX fixme*/
                                nullptr, /* hostname */
                                nssChain,
-                               CertVerifier::FLAG_LOCAL_ONLY) != SECSuccess) {
+                               CertVerifier::FLAG_LOCAL_ONLY)
+        != mozilla::pkix::Success) {
     nssChain = nullptr;
     // keep going
   }
@@ -866,7 +708,8 @@ nsNSSCertificate::GetChain(nsIArray** _rvChain)
                                  nullptr, /*XXX fixme*/
                                  nullptr, /*hostname*/
                                  nssChain,
-                                 CertVerifier::FLAG_LOCAL_ONLY) != SECSuccess) {
+                                 CertVerifier::FLAG_LOCAL_ONLY)
+          != mozilla::pkix::Success) {
       nssChain = nullptr;
       // keep going
     }
@@ -1312,7 +1155,7 @@ nsNSSCertificate::hasValidEVOidTag(SECOidTag& resultOidTag, bool& validEV)
   uint32_t flags = mozilla::psm::CertVerifier::FLAG_LOCAL_ONLY |
     mozilla::psm::CertVerifier::FLAG_MUST_BE_EV;
   UniqueCERTCertList unusedBuiltChain;
-  SECStatus rv = certVerifier->VerifyCert(mCert.get(),
+  mozilla::pkix::Result result = certVerifier->VerifyCert(mCert.get(),
     certificateUsageSSLServer, mozilla::pkix::Now(),
     nullptr /* XXX pinarg */,
     nullptr /* hostname */,
@@ -1322,7 +1165,7 @@ nsNSSCertificate::hasValidEVOidTag(SECOidTag& resultOidTag, bool& validEV)
     nullptr /* sctsFromTLSExtension */,
     &resultOidTag);
 
-  if (rv != SECSuccess) {
+  if (result != mozilla::pkix::Success) {
     resultOidTag = SEC_OID_UNKNOWN;
   }
   if (resultOidTag != SEC_OID_UNKNOWN) {

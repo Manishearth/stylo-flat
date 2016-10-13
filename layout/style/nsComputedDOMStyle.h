@@ -150,8 +150,7 @@ private:
 #undef STYLE_STRUCT
 
   already_AddRefed<CSSValue> GetEllipseRadii(const nsStyleCorners& aRadius,
-                                             uint8_t aFullCorner,
-                                             bool aIsBorder); // else outline
+                                             uint8_t aFullCorner);
 
   already_AddRefed<CSSValue> GetOffsetWidthFor(mozilla::css::Side aSide);
 
@@ -592,8 +591,8 @@ private:
                                nsROCSSPrimitiveValue* aValue);
   void SetValueToPosition(const mozilla::Position& aPosition,
                           nsDOMCSSValueList* aValueList);
-  void SetValueToFragmentOrURL(const mozilla::FragmentOrURL* aFragmentOrURL,
-                               nsROCSSPrimitiveValue* aValue);
+  void SetValueToURLValue(const mozilla::css::URLValueData* aURL,
+                          nsROCSSPrimitiveValue* aValue);
 
   /**
    * A method to get a percentage base for a percentage value.  Returns true

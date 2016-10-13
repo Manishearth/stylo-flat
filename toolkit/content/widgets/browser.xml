@@ -281,6 +281,10 @@
                 onget="return document.getElementById(this.getAttribute('autocompletepopup'))"
                 readonly="true"/>
 
+      <property name="dateTimePicker"
+                onget="return document.getElementById(this.getAttribute('datetimepicker'))"
+                readonly="true"/>
+
       <property name="docShellIsActive">
         <getter>
           <![CDATA[
@@ -1441,7 +1445,7 @@
         // set the dropEffect to 'none'. This prevents the drop even if some
         // other listener cancelled the event.
         var types = event.dataTransfer.types;
-        if (types.contains("text/x-moz-text-internal") && !types.contains("text/plain")) {
+        if (types.includes("text/x-moz-text-internal") && !types.includes("text/plain")) {
           event.dataTransfer.dropEffect = "none";
           event.stopPropagation();
           event.preventDefault();

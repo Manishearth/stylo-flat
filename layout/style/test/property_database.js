@@ -1149,9 +1149,10 @@ var gCSSProperties = {
     type: CSS_TYPE_TRUE_SHORTHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
     subproperties: [ "border-bottom-left-radius", "border-bottom-right-radius", "border-top-left-radius", "border-top-right-radius" ],
-    initial_values: [ "0", "0px", "0%", "0px 0 0 0px", "calc(-2px)", "calc(-1%)", "calc(0px) calc(0pt) calc(0%) calc(0em)" ],
-    other_values: [ "3%", "1px", "2em", "3em 2px", "2pt 3% 4em", "2px 2px 2px 2px", // circular
+    initial_values: [ "0", "0px", "0px 0 0 0px", "calc(-2px)", "calc(0px) calc(0pt)", "calc(0px) calc(0pt) calc(0px) calc(0em)" ],
+    other_values: [ "0%", "3%", "1px", "2em", "3em 2px", "2pt 3% 4em", "2px 2px 2px 2px", // circular
             "3% / 2%", "1px / 4px", "2em / 1em", "3em 2px / 2px 3em", "2pt 3% 4em / 4pt 1% 5em", "2px 2px 2px 2px / 4px 4px 4px 4px", "1pt / 2pt 3pt", "4pt 5pt / 3pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1170,9 +1171,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1189,9 +1191,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1208,9 +1211,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1227,9 +1231,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1378,18 +1383,25 @@ var gCSSProperties = {
     other_values: [ "exact" ],
     invalid_values: []
   },
-  "-moz-columns": {
-    domProp: "MozColumns",
+  "columns": {
+    domProp: "columns",
     inherited: false,
     type: CSS_TYPE_TRUE_SHORTHAND,
-    subproperties: [ "-moz-column-count", "-moz-column-width" ],
+    subproperties: [ "column-count", "column-width" ],
     initial_values: [ "auto", "auto auto" ],
     other_values: [ "3", "20px", "2 10px", "10px 2", "2 auto", "auto 2", "auto 50px", "50px auto" ],
     invalid_values: [ "5%", "-1px", "-1", "3 5", "10px 4px", "10 2px 5in", "30px -1",
                       "auto 3 5px", "5 auto 20px", "auto auto auto", "calc(50px + rubbish) 2" ]
   },
-  "-moz-column-count": {
-    domProp: "MozColumnCount",
+  "-moz-columns": {
+    domProp: "MozColumns",
+    inherited: false,
+    type: CSS_TYPE_TRUE_SHORTHAND,
+    alias_for: "columns",
+    subproperties: [ "column-count", "column-width" ]
+  },
+  "column-count": {
+    domProp: "columnCount",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     initial_values: [ "auto" ],
@@ -1397,16 +1409,30 @@ var gCSSProperties = {
     // negative and zero invalid per editor's draft
     invalid_values: [ "-1", "0", "3px" ]
   },
-        "-moz-column-fill": {
-                domProp: "MozColumnFill",
-                inherited: false,
-                type: CSS_TYPE_LONGHAND,
-                initial_values: [ "balance" ],
-                other_values: [ "auto" ],
-                invalid_values: [ "2px", "dotted", "5em" ]
-        },
-  "-moz-column-gap": {
-    domProp: "MozColumnGap",
+  "-moz-column-count": {
+    domProp: "MozColumnCount",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "column-count",
+    subproperties: [ "column-count" ]
+  },
+  "column-fill": {
+    domProp: "columnFill",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "balance" ],
+    other_values: [ "auto" ],
+    invalid_values: [ "2px", "dotted", "5em" ]
+  },
+  "-moz-column-fill": {
+    domProp: "MozColumnFill",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "column-fill",
+    subproperties: [ "column-fill" ]
+  },
+  "column-gap": {
+    domProp: "columnGap",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     initial_values: [ "normal", "1em", "calc(-2em + 3em)" ],
@@ -1422,18 +1448,32 @@ var gCSSProperties = {
     ],
     invalid_values: [ "3%", "-1px", "4" ]
   },
-  "-moz-column-rule": {
-    domProp: "MozColumnRule",
+  "-moz-column-gap": {
+    domProp: "MozColumnGap",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "column-gap",
+    subproperties: [ "column-gap" ]
+  },
+  "column-rule": {
+    domProp: "columnRule",
     inherited: false,
     type: CSS_TYPE_TRUE_SHORTHAND,
     prerequisites: { "color": "green" },
-    subproperties: [ "-moz-column-rule-width", "-moz-column-rule-style", "-moz-column-rule-color" ],
+    subproperties: [ "column-rule-width", "column-rule-style", "column-rule-color" ],
     initial_values: [ "medium none currentColor", "none", "medium", "currentColor" ],
     other_values: [ "2px blue solid", "red dotted 1px", "ridge 4px orange", "5px solid" ],
     invalid_values: [ "2px 3px 4px red", "dotted dashed", "5px dashed green 3px", "5 solid", "5 green solid" ]
   },
-  "-moz-column-rule-width": {
-    domProp: "MozColumnRuleWidth",
+  "-moz-column-rule": {
+    domProp: "MozColumnRule",
+    inherited: false,
+    type: CSS_TYPE_TRUE_SHORTHAND,
+    alias_for: "column-rule",
+    subproperties: [ "column-rule-width", "column-rule-style", "column-rule-color" ]
+  },
+  "column-rule-width": {
+    domProp: "columnRuleWidth",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "-moz-column-rule-style": "solid" },
@@ -1702,16 +1742,30 @@ var gCSSProperties = {
       "calc((0 + 2em) * 1)",
     ]
   },
-  "-moz-column-rule-style": {
-    domProp: "MozColumnRuleStyle",
+  "-moz-column-rule-width": {
+    domProp: "MozColumnRuleWidth",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "column-rule-width",
+    subproperties: [ "column-rule-width" ]
+  },
+  "column-rule-style": {
+    domProp: "columnRuleStyle",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     initial_values: [ "none" ],
     other_values: [ "solid", "hidden", "ridge", "groove", "inset", "outset", "double", "dotted", "dashed" ],
     invalid_values: [ "20", "foo" ]
   },
-  "-moz-column-rule-color": {
-    domProp: "MozColumnRuleColor",
+  "-moz-column-rule-style": {
+    domProp: "MozColumnRuleStyle",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "column-rule-style",
+    subproperties: [ "column-rule-style" ]
+  },
+  "column-rule-color": {
+    domProp: "columnRuleColor",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "color": "green" },
@@ -1719,8 +1773,15 @@ var gCSSProperties = {
     other_values: [ "red", "blue", "#ffff00" ],
     invalid_values: [ "ffff00" ]
   },
-  "-moz-column-width": {
-    domProp: "MozColumnWidth",
+  "-moz-column-rule-color": {
+    domProp: "MozColumnRuleColor",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "column-rule-color",
+    subproperties: [ "column-rule-color" ]
+  },
+  "column-width": {
+    domProp: "columnWidth",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     initial_values: [ "auto" ],
@@ -1733,6 +1794,13 @@ var gCSSProperties = {
       "calc(0px)"
     ],
     invalid_values: [ "20", "-1px", "50%" ]
+  },
+  "-moz-column-width": {
+    domProp: "MozColumnWidth",
+    inherited: false,
+    type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    alias_for: "column-width",
+    subproperties: [ "column-width" ]
   },
   "-moz-float-edge": {
     domProp: "MozFloatEdge",
@@ -1796,15 +1864,24 @@ var gCSSProperties = {
     ],
     invalid_values: [ "5", "..25px", ".+5px", ".px", "-.px", "++5px", "-+4px", "+-3px", "--7px", "+-.6px", "-+.5px", "++.7px", "--.4px" ],
   },
+  "mask-type": {
+    domProp: "maskType",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "luminance" ],
+    other_values: [ "alpha" ],
+    invalid_values: [],
+  },
   "-moz-outline-radius": {
     domProp: "MozOutlineRadius",
     inherited: false,
     type: CSS_TYPE_TRUE_SHORTHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
     subproperties: [ "-moz-outline-radius-bottomleft", "-moz-outline-radius-bottomright", "-moz-outline-radius-topleft", "-moz-outline-radius-topright" ],
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)", "calc(0px) calc(0pt) calc(0%) calc(0em)" ],
-    other_values: [ "3%", "1px", "2em", "3em 2px", "2pt 3% 4em", "2px 2px 2px 2px", // circular
+    initial_values: [ "0", "0px", "calc(-2px)", "calc(0px) calc(0pt)", "calc(0px) calc(0em)" ],
+    other_values: [ "0%", "3%", "1px", "2em", "3em 2px", "2pt 3% 4em", "2px 2px 2px 2px", // circular
             "3% / 2%", "1px / 4px", "2em / 1em", "3em 2px / 2px 3em", "2pt 3% 4em / 4pt 1% 5em", "2px 2px 2px 2px / 4px 4px 4px 4px", "1pt / 2pt 3pt", "4pt 5pt / 3pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1823,9 +1900,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)", "calc(0px)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)", "calc(0px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1842,9 +1920,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)", "calc(0px)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)", "calc(0px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1861,9 +1940,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)", "calc(0px)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)", "calc(0px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -1880,9 +1960,10 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "width": "200px", "height": "100px", "display": "inline-block"},
-    initial_values: [ "0", "0px", "0%", "calc(-2px)", "calc(-1%)", "calc(0px)" ],
-    other_values: [ "3%", "1px", "2em", // circular
+    initial_values: [ "0", "0px", "calc(-2px)", "calc(0px)" ],
+    other_values: [ "0%", "3%", "1px", "2em", // circular
             "3% 2%", "1px 4px", "2em 2pt", // elliptical
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -3390,12 +3471,13 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "display": "block" },
-    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)", "calc(-1%)",
+    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)",
       // these four keywords compute to the initial value when the
       // writing mode is horizontal, and that's the context we're testing in
       "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
     ],
     other_values: [ "30px", "50%",
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -3410,12 +3492,13 @@ var gCSSProperties = {
     inherited: false,
     type: CSS_TYPE_LONGHAND,
     prerequisites: { "display": "block" },
-    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)", "calc(-1%)" ],
+    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)" ],
     other_values: [ "30px", "50%",
       // these four keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
       "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -5213,8 +5296,9 @@ var gCSSProperties = {
     axis: true,
     get_computed: logical_axis_prop_get_computed,
     prerequisites: { "display": "block" },
-    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)", "calc(-1%)" ],
+    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)" ],
     other_values: [ "30px", "50%",
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -5231,12 +5315,13 @@ var gCSSProperties = {
     axis: true,
     get_computed: logical_axis_prop_get_computed,
     prerequisites: { "display": "block" },
-    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)", "calc(-1%)" ],
+    initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)" ],
     other_values: [ "30px", "50%",
       // these four keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
       "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -5545,17 +5630,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.text-combine-upright.enabled")) {
     gCSSProperties["text-combine-upright"].other_values.push(
       "digits", "digits 2", "digits 3", "digits 4", "digits     3");
   }
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.masking.enabled")) {
-  gCSSProperties["mask-type"] = {
-    domProp: "maskType",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "luminance" ],
-    other_values: [ "alpha" ],
-    invalid_values: []
-  };
 }
 
 if (IsCSSPropertyPrefEnabled("svg.paint-order.enabled")) {

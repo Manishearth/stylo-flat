@@ -5,7 +5,6 @@
 use devtools_traits::AttrInfo;
 use dom::bindings::cell::DOMRefCell;
 use dom::bindings::codegen::Bindings::AttrBinding::{self, AttrMethods};
-use dom::bindings::global::GlobalRef;
 use dom::bindings::inheritance::Castable;
 use dom::bindings::js::{JS, MutNullableHeap};
 use dom::bindings::js::{LayoutJS, Root, RootedReference};
@@ -15,10 +14,10 @@ use dom::element::{AttributeMutation, Element};
 use dom::virtualmethods::vtable_for;
 use dom::window::Window;
 use std::borrow::ToOwned;
+use std::cell::Ref;
 use std::mem;
 use string_cache::{Atom, Namespace};
 use style::attr::{AttrIdentifier, AttrValue};
-use style::refcell::Ref;
 
 // https://dom.spec.whatwg.org/#interface-attr
 #[dom_struct]
@@ -66,7 +65,7 @@ impl Attr {
                                                    namespace,
                                                    prefix,
                                                    owner),
-                           GlobalRef::Window(window),
+                           window,
                            AttrBinding::Wrap)
     }
 
@@ -105,7 +104,7 @@ impl AttrMethods for Attr {
             let value = owner.parse_attribute(&self.identifier.namespace,
                                               self.local_name(),
                                               value);
-            self.set_value(value, owner.r());
+            self.set_value(value, &owner);
         } else {
             *self.value.borrow_mut() = AttrValue::String(value.into());
         }
@@ -201,12 +200,12 @@ impl Attr {
     /// or removed from its older parent.
     pub fn set_owner(&self, owner: Option<&Element>) {
         let ns = &self.identifier.namespace;
-        match (self.owner().r(), owner) {
+        match (self.owner(), owner) {
             (Some(old), None) => {
                 // Already gone from the list of attributes of old owner.
                 assert!(old.get_attribute(&ns, &self.identifier.local_name).r() != Some(self))
             }
-            (Some(old), Some(new)) => assert!(old == new),
+            (Some(old), Some(new)) => assert!(&*old == new),
             _ => {},
         }
         self.owner.set(owner);

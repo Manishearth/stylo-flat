@@ -12,15 +12,15 @@ use dom::bindings::codegen::Bindings::DOMParserBinding::SupportedType::Text_xml;
 use dom::bindings::codegen::Bindings::DocumentBinding::DocumentReadyState;
 use dom::bindings::codegen::Bindings::WindowBinding::WindowMethods;
 use dom::bindings::error::Fallible;
-use dom::bindings::global::GlobalRef;
 use dom::bindings::js::{JS, Root};
 use dom::bindings::reflector::{Reflector, reflect_dom_object};
 use dom::bindings::str::DOMString;
 use dom::document::{Document, IsHTMLDocument};
 use dom::document::DocumentSource;
+use dom::globalscope::GlobalScope;
+use dom::servoparser::html::{ParseContext, parse_html};
+use dom::servoparser::xml::{self, parse_xml};
 use dom::window::Window;
-use parse::html::{ParseContext, parse_html};
-use parse::xml::{self, parse_xml};
 
 #[dom_struct]
 pub struct DOMParser {
@@ -38,11 +38,11 @@ impl DOMParser {
 
     pub fn new(window: &Window) -> Root<DOMParser> {
         reflect_dom_object(box DOMParser::new_inherited(window),
-                           GlobalRef::Window(window),
+                           window,
                            DOMParserBinding::Wrap)
     }
 
-    pub fn Constructor(global: GlobalRef) -> Fallible<Root<DOMParser>> {
+    pub fn Constructor(global: &GlobalScope) -> Fallible<Root<DOMParser>> {
         Ok(DOMParser::new(global.as_window()))
     }
 }
@@ -57,7 +57,6 @@ impl DOMParserMethods for DOMParser {
         let content_type =
             DOMString::from(DOMParserBinding::SupportedTypeValues::strings[ty as usize]);
         let doc = self.window.Document();
-        let doc = doc.r();
         let loader = DocumentLoader::new(&*doc.loader());
         match ty {
             Text_html => {
@@ -71,7 +70,7 @@ impl DOMParserMethods for DOMParser {
                                              loader,
                                              None,
                                              None);
-                parse_html(document.r(), s, url, ParseContext::Owner(None));
+                parse_html(&document, s, url, ParseContext::Owner(None));
                 document.set_ready_state(DocumentReadyState::Complete);
                 Ok(document)
             }
@@ -87,7 +86,7 @@ impl DOMParserMethods for DOMParser {
                                              loader,
                                              None,
                                              None);
-                parse_xml(document.r(), s, url, xml::ParseContext::Owner(None));
+                parse_xml(&document, s, url, xml::ParseContext::Owner(None));
                 Ok(document)
             }
         }

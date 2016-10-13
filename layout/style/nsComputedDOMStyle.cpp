@@ -2143,10 +2143,11 @@ nsComputedDOMStyle::DoGetImageLayerImage(const nsStyleImageLayers& aLayers)
     //    Instead, we store the local URI in one place -- on Layer::mSourceURI.
     //    Hence, we must serialize using mSourceURI (instead of
     //    SetValueToStyleImage()/mImage) in this case.
-    if (aLayers.mLayers[i].mSourceURI.IsLocalRef()) {
+    if (aLayers.mLayers[i].mSourceURI &&
+        aLayers.mLayers[i].mSourceURI->IsLocalRef()) {
       // This is how we represent a 'mask-image' reference for a local URI,
       // such as 'mask-image:url(#mymask)' or 'mask:url(#mymask)'
-      SetValueToFragmentOrURL(&aLayers.mLayers[i].mSourceURI, val);
+      SetValueToURLValue(aLayers.mLayers[i].mSourceURI, val);
     } else {
       SetValueToStyleImage(image, val);
     }
@@ -2387,19 +2388,18 @@ nsComputedDOMStyle::SetValueToPosition(
 
 
 void
-nsComputedDOMStyle::SetValueToFragmentOrURL(
-    const FragmentOrURL* aFragmentOrURL,
-    nsROCSSPrimitiveValue* aValue)
+nsComputedDOMStyle::SetValueToURLValue(const css::URLValueData* aURL,
+                                       nsROCSSPrimitiveValue* aValue)
 {
-  if (aFragmentOrURL->IsLocalRef()) {
+  if (aURL && aURL->IsLocalRef()) {
     nsString fragment;
-    aFragmentOrURL->GetSourceString(fragment);
+    aURL->GetSourceString(fragment);
     fragment.Insert(u"url(\"", 0);
     fragment.Append(u"\")");
     aValue->SetString(fragment);
   } else {
-    nsCOMPtr<nsIURI> url = aFragmentOrURL->GetSourceURL();
-    if (url) {
+    nsCOMPtr<nsIURI> url;
+    if (aURL && (url = aURL->GetURI())) {
       aValue->SetURI(url);
     } else {
       aValue->SetIdent(eCSSKeyword_none);
@@ -3069,28 +3069,28 @@ already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetBorderBottomLeftRadius()
 {
   return GetEllipseRadii(StyleBorder()->mBorderRadius,
-                         NS_CORNER_BOTTOM_LEFT, true);
+                         NS_CORNER_BOTTOM_LEFT);
 }
 
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetBorderBottomRightRadius()
 {
   return GetEllipseRadii(StyleBorder()->mBorderRadius,
-                         NS_CORNER_BOTTOM_RIGHT, true);
+                         NS_CORNER_BOTTOM_RIGHT);
 }
 
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetBorderTopLeftRadius()
 {
   return GetEllipseRadii(StyleBorder()->mBorderRadius,
-                         NS_CORNER_TOP_LEFT, true);
+                         NS_CORNER_TOP_LEFT);
 }
 
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetBorderTopRightRadius()
 {
   return GetEllipseRadii(StyleBorder()->mBorderRadius,
-                         NS_CORNER_TOP_RIGHT, true);
+                         NS_CORNER_TOP_RIGHT);
 }
 
 already_AddRefed<CSSValue>
@@ -3328,28 +3328,28 @@ already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetOutlineRadiusBottomLeft()
 {
   return GetEllipseRadii(StyleOutline()->mOutlineRadius,
-                         NS_CORNER_BOTTOM_LEFT, false);
+                         NS_CORNER_BOTTOM_LEFT);
 }
 
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetOutlineRadiusBottomRight()
 {
   return GetEllipseRadii(StyleOutline()->mOutlineRadius,
-                         NS_CORNER_BOTTOM_RIGHT, false);
+                         NS_CORNER_BOTTOM_RIGHT);
 }
 
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetOutlineRadiusTopLeft()
 {
   return GetEllipseRadii(StyleOutline()->mOutlineRadius,
-                         NS_CORNER_TOP_LEFT, false);
+                         NS_CORNER_TOP_LEFT);
 }
 
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetOutlineRadiusTopRight()
 {
   return GetEllipseRadii(StyleOutline()->mOutlineRadius,
-                         NS_CORNER_TOP_RIGHT, false);
+                         NS_CORNER_TOP_RIGHT);
 }
 
 already_AddRefed<CSSValue>
@@ -3362,42 +3362,15 @@ nsComputedDOMStyle::DoGetOutlineColor()
 
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::GetEllipseRadii(const nsStyleCorners& aRadius,
-                                    uint8_t aFullCorner,
-                                    bool aIsBorder) // else outline
+                                    uint8_t aFullCorner)
 {
-  nsStyleCoord radiusX, radiusY;
-  if (mInnerFrame && aIsBorder) {
-    nscoord radii[8];
-    mInnerFrame->GetBorderRadii(radii);
-    radiusX.SetCoordValue(radii[NS_FULL_TO_HALF_CORNER(aFullCorner, false)]);
-    radiusY.SetCoordValue(radii[NS_FULL_TO_HALF_CORNER(aFullCorner, true)]);
-  } else {
-    radiusX = aRadius.Get(NS_FULL_TO_HALF_CORNER(aFullCorner, false));
-    radiusY = aRadius.Get(NS_FULL_TO_HALF_CORNER(aFullCorner, true));
-
-    if (mInnerFrame) {
-      // We need to convert to absolute coordinates before doing the
-      // equality check below.
-      nscoord v;
-
-      v = StyleCoordToNSCoord(radiusX,
-                              &nsComputedDOMStyle::GetFrameBorderRectWidth,
-                              0, true);
-      radiusX.SetCoordValue(v);
-
-      v = StyleCoordToNSCoord(radiusY,
-                              &nsComputedDOMStyle::GetFrameBorderRectHeight,
-                              0, true);
-      radiusY.SetCoordValue(v);
-    }
-  }
+  nsStyleCoord radiusX = aRadius.Get(NS_FULL_TO_HALF_CORNER(aFullCorner, false));
+  nsStyleCoord radiusY = aRadius.Get(NS_FULL_TO_HALF_CORNER(aFullCorner, true));
 
   // for compatibility, return a single value if X and Y are equal
   if (radiusX == radiusY) {
     RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-
     SetValueToCoord(val, radiusX, true);
-
     return val.forget();
   }
 
@@ -3675,8 +3648,7 @@ nsComputedDOMStyle::DoGetVerticalAlign()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   SetValueToCoord(val, StyleDisplay()->mVerticalAlign, false,
-                  &nsComputedDOMStyle::GetLineHeightCoord,
-                  nsCSSProps::kVerticalAlignKTable);
+                  nullptr, nsCSSProps::kVerticalAlignKTable);
   return val.forget();
 }
 
@@ -3880,8 +3852,7 @@ already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetTextIndent()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  SetValueToCoord(val, StyleText()->mTextIndent, false,
-                  &nsComputedDOMStyle::GetCBContentWidth);
+  SetValueToCoord(val, StyleText()->mTextIndent, false);
   return val.forget();
 }
 
@@ -4400,7 +4371,7 @@ nsComputedDOMStyle::DoGetAlignContent()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   nsAutoString str;
-  auto align = StylePosition()->ComputedAlignContent();
+  auto align = StylePosition()->mAlignContent;
   nsCSSValue::AppendAlignJustifyValueToString(align & NS_STYLE_ALIGN_ALL_BITS, str);
   auto fallback = align >> NS_STYLE_ALIGN_ALL_SHIFT;
   if (fallback) {
@@ -4416,7 +4387,7 @@ nsComputedDOMStyle::DoGetAlignItems()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   nsAutoString str;
-  auto align = StylePosition()->ComputedAlignItems();
+  auto align = StylePosition()->mAlignItems;
   nsCSSValue::AppendAlignJustifyValueToString(align, str);
   val->SetString(str);
   return val.forget();
@@ -4438,7 +4409,7 @@ nsComputedDOMStyle::DoGetJustifyContent()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   nsAutoString str;
-  auto justify = StylePosition()->ComputedJustifyContent();
+  auto justify = StylePosition()->mJustifyContent;
   nsCSSValue::AppendAlignJustifyValueToString(justify & NS_STYLE_JUSTIFY_ALL_BITS, str);
   auto fallback = justify >> NS_STYLE_JUSTIFY_ALL_SHIFT;
   if (fallback) {
@@ -4884,8 +4855,7 @@ nsComputedDOMStyle::DoGetMaxHeight()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   SetValueToCoord(val, StylePosition()->mMaxHeight, true,
-                  &nsComputedDOMStyle::GetCBContentHeight,
-                  nsCSSProps::kWidthKTable);
+                  nullptr, nsCSSProps::kWidthKTable);
   return val.forget();
 }
 
@@ -4894,8 +4864,7 @@ nsComputedDOMStyle::DoGetMaxWidth()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   SetValueToCoord(val, StylePosition()->mMaxWidth, true,
-                  &nsComputedDOMStyle::GetCBContentWidth,
-                  nsCSSProps::kWidthKTable);
+                  nullptr, nsCSSProps::kWidthKTable);
   return val.forget();
 }
 
@@ -4913,9 +4882,7 @@ nsComputedDOMStyle::DoGetMinHeight()
     minHeight.SetCoordValue(0);
   }
 
-  SetValueToCoord(val, minHeight, true,
-                  &nsComputedDOMStyle::GetCBContentHeight,
-                  nsCSSProps::kWidthKTable);
+  SetValueToCoord(val, minHeight, true, nullptr, nsCSSProps::kWidthKTable);
   return val.forget();
 }
 
@@ -4941,9 +4908,8 @@ nsComputedDOMStyle::DoGetMinWidth()
       }
     }
   }
-  SetValueToCoord(val, minWidth, true,
-                  &nsComputedDOMStyle::GetCBContentWidth,
-                  nsCSSProps::kWidthKTable);
+
+  SetValueToCoord(val, minWidth, true, nullptr, nsCSSProps::kWidthKTable);
   return val.forget();
 }
 
@@ -5598,38 +5564,31 @@ nsComputedDOMStyle::GetSVGPaintFor(bool aFill)
 
   nsAutoString paintString;
 
-  switch (paint->mType) {
+  switch (paint->Type()) {
     case eStyleSVGPaintType_None:
-    {
       val->SetIdent(eCSSKeyword_none);
       break;
-    }
     case eStyleSVGPaintType_Color:
-    {
-      SetToRGBAColor(val, paint->mPaint.mColor);
+      SetToRGBAColor(val, paint->GetColor());
       break;
-    }
-    case eStyleSVGPaintType_Server:
-    {
+    case eStyleSVGPaintType_Server: {
       RefPtr<nsDOMCSSValueList> valueList = GetROCSSValueList(false);
       RefPtr<nsROCSSPrimitiveValue> fallback = new nsROCSSPrimitiveValue;
-      SetValueToFragmentOrURL(paint->mPaint.mPaintServer, val);
-      SetToRGBAColor(fallback, paint->mFallbackColor);
+      SetValueToURLValue(paint->GetPaintServer(), val);
+      SetToRGBAColor(fallback, paint->GetFallbackColor());
 
       valueList->AppendCSSValue(val.forget());
       valueList->AppendCSSValue(fallback.forget());
       return valueList.forget();
     }
     case eStyleSVGPaintType_ContextFill:
-    {
       val->SetIdent(eCSSKeyword_context_fill);
+      // XXXheycam context-fill and context-stroke can have fallback colors,
+      // so they should be serialized here too
       break;
-    }
     case eStyleSVGPaintType_ContextStroke:
-    {
       val->SetIdent(eCSSKeyword_context_stroke);
       break;
-    }
   }
 
   return val.forget();
@@ -5651,7 +5610,7 @@ already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetMarkerEnd()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  SetValueToFragmentOrURL(&StyleSVG()->mMarkerEnd, val);
+  SetValueToURLValue(StyleSVG()->mMarkerEnd, val);
 
   return val.forget();
 }
@@ -5660,7 +5619,7 @@ already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetMarkerMid()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  SetValueToFragmentOrURL(&StyleSVG()->mMarkerMid, val);
+  SetValueToURLValue(StyleSVG()->mMarkerMid, val);
 
   return val.forget();
 }
@@ -5669,7 +5628,7 @@ already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetMarkerStart()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  SetValueToFragmentOrURL(&StyleSVG()->mMarkerStart, val);
+  SetValueToURLValue(StyleSVG()->mMarkerStart, val);
 
   return val.forget();
 }
@@ -6064,7 +6023,7 @@ nsComputedDOMStyle::GetShapeSource(
                                                 aBoxKeywordTable);
     case StyleShapeSourceType::URL: {
       RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-      SetValueToFragmentOrURL(aShapeSource.GetURL(), val);
+      SetValueToURLValue(aShapeSource.GetURL(), val);
       return val.forget();
     }
     case StyleShapeSourceType::None: {
@@ -6109,8 +6068,9 @@ nsComputedDOMStyle::CreatePrimitiveValueForStyleFilter(
   RefPtr<nsROCSSPrimitiveValue> value = new nsROCSSPrimitiveValue;
   // Handle url().
   if (aStyleFilter.GetType() == NS_STYLE_FILTER_URL) {
-    MOZ_ASSERT(aStyleFilter.GetURL()->GetSourceURL());
-    SetValueToFragmentOrURL(aStyleFilter.GetURL(), value);
+    MOZ_ASSERT(aStyleFilter.GetURL() &&
+               aStyleFilter.GetURL()->GetURI());
+    SetValueToURLValue(aStyleFilter.GetURL(), value);
     return value.forget();
   }
 
@@ -6188,11 +6148,7 @@ nsComputedDOMStyle::DoGetMask()
 
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
 
-  if (firstLayer.mSourceURI.GetSourceURL()) {
-    SetValueToFragmentOrURL(&firstLayer.mSourceURI, val);
-  } else {
-    val->SetIdent(eCSSKeyword_none);
-  }
+  SetValueToURLValue(firstLayer.mSourceURI, val);
 
   return val.forget();
 }

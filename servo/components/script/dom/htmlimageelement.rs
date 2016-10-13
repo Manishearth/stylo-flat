@@ -2,14 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use app_units::Au;
+use app_units::{Au, AU_PER_PX};
 use dom::attr::Attr;
 use dom::bindings::cell::DOMRefCell;
 use dom::bindings::codegen::Bindings::HTMLImageElementBinding;
 use dom::bindings::codegen::Bindings::HTMLImageElementBinding::HTMLImageElementMethods;
 use dom::bindings::codegen::Bindings::WindowBinding::WindowMethods;
 use dom::bindings::error::Fallible;
-use dom::bindings::global::GlobalRef;
 use dom::bindings::inheritance::Castable;
 use dom::bindings::js::{LayoutJS, Root};
 use dom::bindings::refcounted::Trusted;
@@ -17,6 +16,7 @@ use dom::bindings::str::DOMString;
 use dom::document::Document;
 use dom::element::{AttributeMutation, Element, RawLayoutElementHelpers};
 use dom::eventtarget::EventTarget;
+use dom::globalscope::GlobalScope;
 use dom::htmlelement::HTMLElement;
 use dom::node::{Node, NodeDamage, document_from_node, window_from_node};
 use dom::values::UNSIGNED_LONG_MAX;
@@ -28,6 +28,7 @@ use net_traits::image_cache_thread::{ImageResponder, ImageResponse};
 use script_runtime::CommonScriptMsg;
 use script_runtime::ScriptThreadEventCategory::UpdateReplacedElement;
 use script_thread::Runnable;
+use std::i32;
 use std::sync::Arc;
 use string_cache::Atom;
 use style::attr::{AttrValue, LengthOrPercentageOrAuto};
@@ -47,6 +48,7 @@ struct ImageRequest {
     state: State,
     parsed_url: Option<Url>,
     source_url: Option<DOMString>,
+    #[ignore_heap_size_of = "Arc"]
     image: Option<Arc<Image>>,
     metadata: Option<ImageMetadata>,
 }
@@ -85,7 +87,6 @@ impl Runnable for ImageResponseHandlerRunnable {
     fn handler(self: Box<Self>) {
         // Update the image field
         let element = self.element.root();
-        let element_ref = element.r();
         let (image, metadata, trigger_image_load, trigger_image_error) = match self.image {
             ImageResponse::Loaded(image) | ImageResponse::PlaceholderLoaded(image) => {
                 (Some(image.clone()), Some(ImageMetadata { height: image.height, width: image.width } ), true, false)
@@ -95,8 +96,8 @@ impl Runnable for ImageResponseHandlerRunnable {
             }
             ImageResponse::None => (None, None, false, true)
         };
-        element_ref.current_request.borrow_mut().image = image;
-        element_ref.current_request.borrow_mut().metadata = metadata;
+        element.current_request.borrow_mut().image = image;
+        element.current_request.borrow_mut().metadata = metadata;
 
         // Mark the node dirty
         let document = document_from_node(&*element);
@@ -113,7 +114,7 @@ impl Runnable for ImageResponseHandlerRunnable {
         }
 
         // Trigger reflow
-        let window = window_from_node(document.r());
+        let window = window_from_node(&*document);
         window.add_pending_reflow();
     }
 }
@@ -189,7 +190,7 @@ impl HTMLImageElement {
                         src: src.into(),
                     };
                     let task = window.dom_manipulation_task_source();
-                    let _ = task.queue(runnable, GlobalRef::Window(window));
+                    let _ = task.queue(runnable, window.upcast());
                 }
             }
         }
@@ -223,11 +224,11 @@ impl HTMLImageElement {
                            HTMLImageElementBinding::Wrap)
     }
 
-    pub fn Image(global: GlobalRef,
+    pub fn Image(global: &GlobalScope,
                  width: Option<u32>,
                  height: Option<u32>) -> Fallible<Root<HTMLImageElement>> {
         let document = global.as_window().Document();
-        let image = HTMLImageElement::new(atom!("img"), None, document.r());
+        let image = HTMLImageElement::new(atom!("img"), None, &document);
         if let Some(w) = width {
             image.SetWidth(w);
         }
@@ -442,7 +443,19 @@ fn image_dimension_setter(element: &Element, attr: Atom, value: u32) {
     } else {
         value
     };
-    let dim = LengthOrPercentageOrAuto::Length(Au::from_px(value as i32));
+
+    // FIXME: There are probably quite a few more cases of this. This is the
+    // only overflow that was hitting on automation, but we should consider what
+    // to do in the general case case.
+    //
+    // See <https://github.com/servo/app_units/issues/22>
+    let pixel_value = if value > (i32::MAX / AU_PER_PX) as u32 {
+        0
+    } else {
+        value
+    };
+
+    let dim = LengthOrPercentageOrAuto::Length(Au::from_px(pixel_value as i32));
     let value = AttrValue::Dimension(value.to_string(), dim);
     element.set_attribute(&attr, value);
 }

@@ -305,8 +305,8 @@ class IDLScope(IDLObject):
         # because we need to merge overloads of NamedConstructors and we need to
         # detect conflicts in those across interfaces. See also the comment in
         # IDLInterface.addExtendedAttributes for "NamedConstructor".
-        if (originalObject.tag == IDLInterfaceMember.Tags.Method and
-           newObject.tag == IDLInterfaceMember.Tags.Method):
+        if (isinstance(originalObject, IDLMethod) and
+            isinstance(newObject, IDLMethod)):
             return originalObject.addOverload(newObject)
 
         # Default to throwing, derived classes can override.
@@ -3457,6 +3457,14 @@ class IDLInterfaceMember(IDLObjectWithIdentifier, IDLExposureMixins):
             if self.dependsOn == "Nothing" or self.dependsOn == "DOMState":
                 raise WebIDLError("A [NewObject] method is not idempotent, "
                                   "so it has to depend on something other than DOM state.",
+                                  [self.location])
+            if (self.getExtendedAttribute("Cached") or
+                self.getExtendedAttribute("StoreInSlot")):
+                raise WebIDLError("A [NewObject] attribute shouldnt be "
+                                  "[Cached] or [StoreInSlot], since the point "
+                                  "of those is to keep returning the same "
+                                  "thing across multiple calls, which is not "
+                                  "what [NewObject] does.",
                                   [self.location])
 
     def _setDependsOn(self, dependsOn):

@@ -334,18 +334,6 @@ public:
                   const ContentParentId& aCpId,
                   bool aMarkedDestroying);
 
-  /*
-   * Add the appId's reference count by the given ContentParentId and TabId
-   */
-  static bool
-  PermissionManagerAddref(const ContentParentId& aCpId, const TabId& aTabId);
-
-  /*
-   * Release the appId's reference count by the given ContentParentId and TabId
-   */
-  static bool
-  PermissionManagerRelease(const ContentParentId& aCpId, const TabId& aTabId);
-
   void ReportChildAlreadyBlocked();
 
   bool RequestRunToCompletion();
@@ -564,6 +552,9 @@ public:
 
   virtual bool
   RecvUnstoreAndBroadcastBlobURLUnregistration(const nsCString& aURI) override;
+
+  virtual bool
+  RecvGetA11yContentId(uint32_t* aContentId) override;
 
   virtual int32_t Pid() const override;
 
@@ -852,12 +843,6 @@ private:
 
   virtual bool DeallocPHandlerServiceParent(PHandlerServiceParent*) override;
 
-  virtual PCellBroadcastParent* AllocPCellBroadcastParent() override;
-
-  virtual bool DeallocPCellBroadcastParent(PCellBroadcastParent*) override;
-
-  virtual bool RecvPCellBroadcastConstructor(PCellBroadcastParent* aActor) override;
-
   virtual PSmsParent* AllocPSmsParent() override;
 
   virtual bool DeallocPSmsParent(PSmsParent*) override;
@@ -883,10 +868,6 @@ private:
   virtual bool DeallocPBluetoothParent(PBluetoothParent* aActor) override;
 
   virtual bool RecvPBluetoothConstructor(PBluetoothParent* aActor) override;
-
-  virtual PFMRadioParent* AllocPFMRadioParent() override;
-
-  virtual bool DeallocPFMRadioParent(PFMRadioParent* aActor) override;
 
   virtual PPresentationParent* AllocPPresentationParent() override;
 

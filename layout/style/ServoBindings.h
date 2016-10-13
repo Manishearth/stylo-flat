@@ -226,6 +226,11 @@ const uint16_t* Gecko_GetAtomAsUTF16(nsIAtom* aAtom, uint32_t* aLength);
 bool Gecko_AtomEqualsUTF8(nsIAtom* aAtom, const char* aString, uint32_t aLength);
 bool Gecko_AtomEqualsUTF8IgnoreCase(nsIAtom* aAtom, const char* aString, uint32_t aLength);
 
+// Strings (temporary until bug 1294742)
+void Gecko_Utf8SliceToString(nsString* aString,
+                             const uint8_t* aBuffer,
+                             size_t aBufferLen);
+
 // Font style
 void Gecko_FontFamilyList_Clear(FontFamilyList* aList);
 void Gecko_FontFamilyList_AppendNamed(FontFamilyList* aList, nsIAtom* aName);
@@ -295,10 +300,8 @@ void Gecko_ClearPODTArray(void* array, size_t elem_size, size_t elem_align);
 void Gecko_ClearStyleContents(nsStyleContent* content);
 void Gecko_CopyStyleContentsFrom(nsStyleContent* content, const nsStyleContent* other);
 
-void Gecko_EnsureImageLayersLength(nsStyleImageLayers* layers, size_t len);
-
-void Gecko_InitializeImageLayer(nsStyleImageLayers::Layer* layer,
-                                nsStyleImageLayers::LayerType layer_type);
+void Gecko_EnsureImageLayersLength(nsStyleImageLayers* layers, size_t len,
+                                   nsStyleImageLayers::LayerType layer_type);
 
 // Clean up pointer-based coordinates
 void Gecko_ResetStyleCoord(nsStyleUnit* unit, nsStyleUnion* value);

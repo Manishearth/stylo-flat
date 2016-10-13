@@ -27,10 +27,14 @@ window.onload = Task.async(function* () {
     yield testMaxProps();
     yield testMoreThanMaxProps();
     yield testUninterestingProps();
+    yield testNonEnumerableProps();
 
     // Test that properties are rendered as expected by PropRep
     yield testNestedObject();
     yield testNestedArray();
+
+    // Test that 'more' property doesn't clobber the caption.
+    yield testMoreProp();
   } catch(e) {
     ok(false, "Got an error: " + DevToolsUtils.safeErrorString(e));
   } finally {
@@ -47,7 +51,7 @@ window.onload = Task.async(function* () {
     is(renderedRep.type, Grip.rep, `Rep correctly selects ${Grip.rep.displayName}`);
 
     // Test rendering
-    const defaultOutput = `Object`;
+    const defaultOutput = `Object {  }`;
 
     const modeTests = [
       {
@@ -56,7 +60,7 @@ window.onload = Task.async(function* () {
       },
       {
         mode: "tiny",
-        expectedOutput: defaultOutput,
+        expectedOutput: `Object`,
       },
       {
         mode: "short",
@@ -143,6 +147,40 @@ window.onload = Task.async(function* () {
     const expectedOutput = `Object { a: undefined, b: undefined, c: "c", 1 more… }`;
   }
 
+  function testNonEnumerableProps() {
+    // Test object: `Object.defineProperty({}, "foo", {enumerable : false});`
+    const testName = "testNonEnumerableProps";
+
+    // Test that correct rep is chosen
+    const gripStub = getGripStub("testNonEnumerableProps");
+    const renderedRep = shallowRenderComponent(Rep, { object: gripStub });
+    is(renderedRep.type, Grip.rep, `Rep correctly selects ${Grip.rep.displayName}`);
+
+    // Test rendering
+    const defaultOutput = `Object {  }`;
+
+    const modeTests = [
+      {
+        mode: undefined,
+        expectedOutput: defaultOutput,
+      },
+      {
+        mode: "tiny",
+        expectedOutput: `Object`,
+      },
+      {
+        mode: "short",
+        expectedOutput: defaultOutput,
+      },
+      {
+        mode: "long",
+        expectedOutput: defaultOutput,
+      }
+    ];
+
+    testRepRenderModes(modeTests, testName, componentUnderTest, getGripStub(testName));
+  }
+
   function testNestedObject() {
     // Test object: `{objProp: {id: 1}, strProp: "test string"}`
     const testName = "testNestedObject";
@@ -193,6 +231,35 @@ window.onload = Task.async(function* () {
       {
         mode: "long",
         expectedOutput: defaultOutput,
+      }
+    ];
+
+    testRepRenderModes(modeTests, testName, componentUnderTest, getGripStub(testName));
+  }
+
+  function testMoreProp() {
+    // Test object: `{a: undefined, b: 1, more: 2, d: 3}`;
+    const testName = "testMoreProp";
+
+    const defaultOutput = `Object { b: 1, more: 2, d: 3, 1 more… }`;
+    const longOutput = `Object { a: undefined, b: 1, more: 2, d: 3 }`;
+
+    const modeTests = [
+      {
+        mode: undefined,
+        expectedOutput: defaultOutput,
+      },
+      {
+        mode: "tiny",
+        expectedOutput: `Object`,
+      },
+      {
+        mode: "short",
+        expectedOutput: defaultOutput,
+      },
+      {
+        mode: "long",
+        expectedOutput: longOutput,
       }
     ];
 
@@ -330,7 +397,22 @@ window.onload = Task.async(function* () {
             "safeGetterValues": {}
           }
         };
-
+      case "testNonEnumerableProps":
+        return {
+          "type": "object",
+          "actor": "server1.conn1.child1/obj30",
+          "class": "Object",
+          "extensible": true,
+          "frozen": false,
+          "sealed": false,
+          "ownPropertyLength": 1,
+          "preview": {
+            "kind": "Object",
+            "ownProperties": {},
+            "ownPropertiesLength": 1,
+            "safeGetterValues": {}
+          }
+        };
       case "testNestedObject":
         return {
           "type": "object",
@@ -403,6 +485,50 @@ window.onload = Task.async(function* () {
             "ownPropertiesLength": 1,
             "safeGetterValues": {}
           },
+        };
+
+      case "testMoreProp":
+        return {
+          "type": "object",
+          "class": "Object",
+          "actor": "server1.conn0.obj342",
+          "extensible": true,
+          "frozen": false,
+          "sealed": false,
+          "ownPropertyLength": 4,
+          "preview": {
+            "kind": "Object",
+            "ownProperties": {
+              "a": {
+                "configurable": true,
+                "enumerable": true,
+                "writable": true,
+                "value": {
+                  "type": "undefined"
+                }
+              },
+              "b": {
+                "configurable": true,
+                "enumerable": true,
+                "writable": true,
+                "value": 1
+              },
+              "more": {
+                "configurable": true,
+                "enumerable": true,
+                "writable": true,
+                "value": 2
+              },
+              "d": {
+                "configurable": true,
+                "enumerable": true,
+                "writable": true,
+                "value": 3
+              }
+            },
+            "ownPropertiesLength": 4,
+            "safeGetterValues": {}
+          }
         };
 
     }

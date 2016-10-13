@@ -791,9 +791,6 @@ pref("memory.dump_reports_on_oom", false);
 pref("layout.framevisibility.numscrollportwidths", 1);
 pref("layout.framevisibility.numscrollportheights", 1);
 
-// Enable native identity (persona/browserid)
-pref("dom.identity.enabled", true);
-
 // Wait up to this much milliseconds when orientation changed
 pref("layers.orientation.sync.timeout", 1000);
 
@@ -959,15 +956,10 @@ pref("layout.accessiblecaret.bar.enabled", true);
 // Hide the caret in cursor mode after 3 seconds.
 pref("layout.accessiblecaret.timeout_ms", 3000);
 
-// APZ on real devices supports long tap events.
-#ifdef MOZ_WIDGET_GONK
-pref("layout.accessiblecaret.use_long_tap_injector", false);
-#endif
-
 // Hide carets and text selection dialog during scrolling.
 pref("layout.accessiblecaret.always_show_when_scrolling", false);
 
-// Enable sync and mozId with Firefox Accounts.
+// Enable sync with Firefox Accounts.
 pref("services.sync.fxaccounts.enabled", true);
 pref("identity.fxaccounts.enabled", true);
 
@@ -1016,7 +1008,7 @@ pref("dom.activities.developer_mode_only", "import-app");
 pref("dom.serviceWorkers.enabled", false);
 pref("dom.push.enabled", false);
 
-#if defined(RELEASE_BUILD)
+#if defined(RELEASE_OR_BETA)
 // Bug 1278848: Enable service worker notifications on release B2G once
 // they're ready.
 pref("dom.webnotifications.serviceworker.enabled", false);

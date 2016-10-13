@@ -1476,6 +1476,8 @@ nsDocument::~nsDocument()
     mAnimationController->Disconnect();
   }
 
+  MOZ_ASSERT(mTimelines.isEmpty());
+
   mParentDocument = nullptr;
 
   // Kill the subdocument map, doing this will release its strong
@@ -1998,15 +2000,7 @@ nsDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup)
   // Note that, since mTiming does not change during a reset, the
   // navigationStart time remains unchanged and therefore any future new
   // timeline will have the same global clock time as the old one.
-  if (mDocumentTimeline) {
-    nsRefreshDriver* rd = mPresShell && mPresShell->GetPresContext() ?
-                          mPresShell->GetPresContext()->RefreshDriver() :
-                          nullptr;
-    if (rd) {
-      mDocumentTimeline->NotifyRefreshDriverDestroying(rd);
-    }
-    mDocumentTimeline = nullptr;
-  }
+  mDocumentTimeline = nullptr;
 
   nsCOMPtr<nsIPropertyBag2> bag = do_QueryInterface(aChannel);
   if (bag) {
@@ -6239,12 +6233,26 @@ NS_IMETHODIMP
 nsDocument::LoadBindingDocument(const nsAString& aURI)
 {
   ErrorResult rv;
-  nsIDocument::LoadBindingDocument(aURI, rv);
+  nsIDocument::LoadBindingDocument(aURI,
+                                   nsContentUtils::GetCurrentJSContext()
+                                     ? Some(nsContentUtils::SubjectPrincipal())
+                                     : Nothing(),
+                                   rv);
   return rv.StealNSResult();
 }
 
 void
-nsIDocument::LoadBindingDocument(const nsAString& aURI, ErrorResult& rv)
+nsIDocument::LoadBindingDocument(const nsAString& aURI,
+                                 nsIPrincipal& aSubjectPrincipal,
+                                 ErrorResult& rv)
+{
+  LoadBindingDocument(aURI, Some(&aSubjectPrincipal), rv);
+}
+
+void
+nsIDocument::LoadBindingDocument(const nsAString& aURI,
+                                 const Maybe<nsIPrincipal*>& aSubjectPrincipal,
+                                 ErrorResult& rv)
 {
   nsCOMPtr<nsIURI> uri;
   rv = NS_NewURI(getter_AddRefs(uri), aURI,
@@ -6258,8 +6266,7 @@ nsIDocument::LoadBindingDocument(const nsAString& aURI, ErrorResult& rv)
   // It's just designed to preserve the old semantics during a mass-conversion
   // patch.
   nsCOMPtr<nsIPrincipal> subjectPrincipal =
-    nsContentUtils::GetCurrentJSContext() ? nsContentUtils::SubjectPrincipal()
-                                          : NodePrincipal();
+    aSubjectPrincipal.isSome() ? aSubjectPrincipal.value() : NodePrincipal();
   BindingManager()->LoadBindingDocument(this, uri, subjectPrincipal);
 }
 

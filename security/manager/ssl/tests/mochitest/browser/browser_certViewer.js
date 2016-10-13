@@ -10,16 +10,6 @@
 
 var { OS } = Cu.import("resource://gre/modules/osfile.jsm", {});
 
-var certificates = [];
-
-registerCleanupFunction(function() {
-  let certdb = Cc["@mozilla.org/security/x509certdb;1"]
-                 .getService(Ci.nsIX509CertDB);
-  certificates.forEach(cert => {
-    certdb.deleteCertificate(cert);
-  });
-});
-
 add_task(function* () {
   let cert = yield readCertificate("ca.pem", "CTu,CTu,CTu");
   let win = yield displayCertificate(cert);
@@ -126,42 +116,6 @@ add_task(function* () {
   checkError(win, "Could not verify this certificate for unknown reasons.");
   yield BrowserTestUtils.closeWindow(win);
 });
-
-/**
- * Helper for readCertificate.
- */
-function pemToBase64(pem) {
-  return pem.replace(/-----BEGIN CERTIFICATE-----/, "")
-            .replace(/-----END CERTIFICATE-----/, "")
-            .replace(/[\r\n]/g, "");
-}
-
-/**
- * Given the filename of a certificate, returns a promise that will resolve with
- * a handle to the certificate when that certificate has been read and imported
- * with the given trust settings.
- *
- * @param {String} filename
- *        The filename of the certificate (assumed to be in the same directory).
- * @param {String} trustString
- *        A string describing how the certificate should be trusted (see
- *        `certutil -A --help`).
- * @return {Promise}
- *         A promise that will resolve with a handle to the certificate.
- */
-function readCertificate(filename, trustString) {
-  return OS.File.read(getTestFilePath(filename)).then(data => {
-    let decoder = new TextDecoder();
-    let pem = decoder.decode(data);
-    let certdb = Cc["@mozilla.org/security/x509certdb;1"]
-                   .getService(Ci.nsIX509CertDB);
-    let base64 = pemToBase64(pem);
-    certdb.addCertFromBase64(base64, trustString, "unused");
-    let cert = certdb.constructX509FromBase64(base64);
-    certificates.push(cert); // so we remember to delete this at the end
-    return cert;
-  }, error => { throw error; });
-}
 
 /**
  * Given a certificate, returns a promise that will resolve when the certificate

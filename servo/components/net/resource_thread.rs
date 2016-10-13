@@ -35,7 +35,7 @@ use net_traits::storage_thread::StorageThreadMsg;
 use profile_traits::time::ProfilerChan;
 use rustc_serialize::{Decodable, Encodable};
 use rustc_serialize::json;
-use std::borrow::ToOwned;
+use std::borrow::{Cow, ToOwned};
 use std::boxed::FnBox;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -101,8 +101,8 @@ pub fn start_sending_sniffed_opt(start_chan: LoadConsumer, mut metadata: Metadat
                                  -> Result<ProgressSender, ()> {
     if PREFS.get("network.mime.sniff").as_boolean().unwrap_or(false) {
         // TODO: should be calculated in the resource loader, from pull requeset #4094
-        let mut no_sniff = NoSniffFlag::OFF;
-        let mut check_for_apache_bug = ApacheBugFlag::OFF;
+        let mut no_sniff = NoSniffFlag::Off;
+        let mut check_for_apache_bug = ApacheBugFlag::Off;
 
         if let Some(ref headers) = metadata.headers {
             if let Some(ref content_type) = headers.get_raw("content-type").and_then(|c| c.last()) {
@@ -110,21 +110,21 @@ pub fn start_sending_sniffed_opt(start_chan: LoadConsumer, mut metadata: Metadat
             }
             if let Some(ref raw_content_type_options) = headers.get_raw("X-content-type-options") {
                 if raw_content_type_options.iter().any(|ref opt| *opt == b"nosniff") {
-                    no_sniff = NoSniffFlag::ON
+                    no_sniff = NoSniffFlag::On
                 }
             }
         }
 
         let supplied_type =
             metadata.content_type.as_ref().map(|&Serde(ContentType(Mime(ref toplevel, ref sublevel, _)))| {
-            (format!("{}", toplevel), format!("{}", sublevel))
+            (toplevel.to_owned(), format!("{}", sublevel))
         });
         let (toplevel, sublevel) = classifier.classify(context,
                                                        no_sniff,
                                                        check_for_apache_bug,
                                                        &supplied_type,
                                                        &partial_body);
-        let mime_tp: TopLevel = toplevel.parse().unwrap();
+        let mime_tp: TopLevel = toplevel.into();
         let mime_sb: SubLevel = sublevel.parse().unwrap();
         metadata.content_type =
             Some(Serde(ContentType(Mime(mime_tp, mime_sb, vec![]))));
@@ -164,7 +164,7 @@ fn start_sending_opt(start_chan: LoadConsumer, metadata: Metadata,
 }
 
 /// Returns a tuple of (public, private) senders to the new threads.
-pub fn new_resource_threads(user_agent: String,
+pub fn new_resource_threads(user_agent: Cow<'static, str>,
                             devtools_chan: Option<Sender<DevtoolsControlMsg>>,
                             profiler_chan: ProfilerChan,
                             config_dir: Option<PathBuf>)
@@ -181,7 +181,7 @@ pub fn new_resource_threads(user_agent: String,
 
 
 /// Create a CoreResourceThread
-pub fn new_core_resource_thread(user_agent: String,
+pub fn new_core_resource_thread(user_agent: Cow<'static, str>,
                                 devtools_chan: Option<Sender<DevtoolsControlMsg>>,
                                 profiler_chan: ProfilerChan,
                                 config_dir: Option<PathBuf>)
@@ -470,7 +470,7 @@ pub struct AuthCache {
 }
 
 pub struct CoreResourceManager {
-    user_agent: String,
+    user_agent: Cow<'static, str>,
     mime_classifier: Arc<MimeClassifier>,
     devtools_chan: Option<Sender<DevtoolsControlMsg>>,
     swmanager_chan: Option<IpcSender<CustomResponseMediator>>,
@@ -481,7 +481,7 @@ pub struct CoreResourceManager {
 }
 
 impl CoreResourceManager {
-    pub fn new(user_agent: String,
+    pub fn new(user_agent: Cow<'static, str>,
                devtools_channel: Option<Sender<DevtoolsControlMsg>>,
                profiler_chan: ProfilerChan) -> CoreResourceManager {
         CoreResourceManager {

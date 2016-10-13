@@ -230,7 +230,7 @@ const TYPES = {
   experiment: 128,
 };
 
-if (!AppConstants.RELEASE_BUILD)
+if (!AppConstants.RELEASE_OR_BETA)
   TYPES.apiextension = 256;
 
 // Some add-on types that we track internally are presented as other types
@@ -409,6 +409,33 @@ function setFilePermissions(aFile, aPermissions) {
   catch (e) {
     logger.warn("Failed to set permissions " + aPermissions.toString(8) + " on " +
          aFile.path, e);
+  }
+}
+
+/**
+ * Write a given string to a file
+ *
+ * @param  file
+ *         The nsIFile instance to write into
+ * @param  string
+ *         The string to write
+ */
+function writeStringToFile(file, string) {
+  let stream = Cc["@mozilla.org/network/file-output-stream;1"].
+               createInstance(Ci.nsIFileOutputStream);
+  let converter = Cc["@mozilla.org/intl/converter-output-stream;1"].
+                  createInstance(Ci.nsIConverterOutputStream);
+
+  try {
+    stream.init(file, FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE |
+                            FileUtils.MODE_TRUNCATE, FileUtils.PERMS_FILE,
+                           0);
+    converter.init(stream, "UTF-8", 0, 0x0000);
+    converter.writeString(string);
+  }
+  finally {
+    converter.close();
+    stream.close();
   }
 }
 
@@ -976,11 +1003,24 @@ var loadManifestFromWebManifest = Task.async(function*(aUri) {
     // localization placeholders still in place.
     let rawManifest = extension.rawManifest;
 
+    let creator = rawManifest.author;
+    let homepageURL = rawManifest.homepage_url;
+
+    // Allow developer to override creator and homepage_url.
+    if (rawManifest.developer) {
+      if (rawManifest.developer.name) {
+        creator = rawManifest.developer.name;
+      }
+      if (rawManifest.developer.url) {
+        homepageURL = rawManifest.developer.url;
+      }
+    }
+
     let result = {
       name: extension.localize(rawManifest.name, aLocale),
       description: extension.localize(rawManifest.description, aLocale),
-      creator: extension.localize(rawManifest.creator, aLocale),
-      homepageURL: extension.localize(rawManifest.homepage_url, aLocale),
+      creator: extension.localize(creator, aLocale),
+      homepageURL: extension.localize(homepageURL, aLocale),
 
       developers: null,
       translators: null,
@@ -3516,8 +3556,11 @@ this.XPIProvider = {
         }
 
         try {
-          addon._sourceBundle = location.installAddon(id, stageDirEntry,
-                                                       existingAddonID);
+          addon._sourceBundle = location.installAddon({
+            id,
+            source: stageDirEntry,
+            existingAddonID
+          });
         }
         catch (e) {
           logger.error("Failed to install staged add-on " + id + " in " + location.name,
@@ -3658,7 +3701,7 @@ this.XPIProvider = {
 
       // Install the add-on
       try {
-        addon._sourceBundle = profileLocation.installAddon(id, entry, null, true);
+        addon._sourceBundle = profileLocation.installAddon({ id, source: entry, action: "copy" });
         logger.debug("Installed distribution add-on " + id);
 
         Services.prefs.setBoolPref(PREF_BRANCH_INSTALLED_ADDON + id, true)
@@ -4014,15 +4057,48 @@ this.XPIProvider = {
    * @param aFile
    *        An nsIFile for the unpacked add-on directory or XPI file.
    *
+   * @return See installAddonFromLocation return value.
+   */
+  installTemporaryAddon: function(aFile) {
+    return this.installAddonFromLocation(aFile, TemporaryInstallLocation);
+  },
+
+  /**
+   * Permanently installs add-on from a local XPI file or directory.
+   * The signature is checked but the add-on persist on application restart.
+   *
+   * @param aFile
+   *        An nsIFile for the unpacked add-on directory or XPI file.
+   *
+   * @return See installAddonFromLocation return value.
+   */
+  installAddonFromSources: Task.async(function*(aFile) {
+    let location = XPIProvider.installLocationsByName[KEY_APP_PROFILE];
+    return this.installAddonFromLocation(aFile, location, "proxy");
+  }),
+
+  /**
+   * Installs add-on from a local XPI file or directory.
+   *
+   * @param aFile
+   *        An nsIFile for the unpacked add-on directory or XPI file.
+   * @param aInstallLocation
+   *        Define a custom install location object to use for the install.
+   * @param aInstallAction
+   *        Optional action mode to use when installing the addon
+   *        (see MutableDirectoryInstallLocation.installAddon)
+   *
    * @return a Promise that resolves to an Addon object on success, or rejects
    *         if the add-on is not a valid restartless add-on or if the
-   *         same ID is already temporarily installed
+   *         same ID is already installed.
    */
-  installTemporaryAddon: Task.async(function*(aFile) {
+  installAddonFromLocation: Task.async(function*(aFile, aInstallLocation, aInstallAction) {
     if (aFile.exists() && aFile.isFile()) {
       flushJarCache(aFile);
     }
-    let addon = yield loadManifestFromFile(aFile, TemporaryInstallLocation);
+    let addon = yield loadManifestFromFile(aFile, aInstallLocation);
+
+    aInstallLocation.installAddon({ id: addon.id, source: aFile, action: aInstallAction });
 
     if (addon.appDisabled) {
       let message = `Add-on ${addon.id} is not compatible with application version.`;
@@ -4041,7 +4117,7 @@ this.XPIProvider = {
 
     if (!addon.bootstrap) {
       throw new Error("Only restartless (bootstrap) add-ons"
-                    + " can be temporarily installed:", addon.id);
+                    + " can be installed from sources:", addon.id);
     }
     let installReason = BOOTSTRAP_REASONS.ADDON_INSTALL;
     let oldAddon = yield new Promise(
@@ -4096,6 +4172,7 @@ this.XPIProvider = {
 
     XPIStates.addAddon(addon);
     XPIDatabase.saveChanges();
+    XPIStates.save();
 
     AddonManagerPrivate.callAddonListeners("onInstalling", addon.wrapper,
                                            false);
@@ -6273,6 +6350,7 @@ AddonInstall.prototype = {
                   case AddonManager.STATE_POSTPONED:
                     logger.info(`${this.addon.id} has resumed a previously postponed upgrade`);
                     this.state = AddonManager.STATE_DOWNLOADED;
+                    this.installLocation.releaseStagingDir();
                     this.install();
                     break;
                   default:
@@ -6393,8 +6471,11 @@ AddonInstall.prototype = {
 
         // Install the new add-on into its final location
         let existingAddonID = this.existingAddon ? this.existingAddon.id : null;
-        let file = this.installLocation.installAddon(this.addon.id, stagedAddon,
-                                                     existingAddonID);
+        let file = this.installLocation.installAddon({
+          id: this.addon.id,
+          source: stagedAddon,
+          existingAddonID
+        });
 
         // Update the metadata in the database
         this.addon._sourceBundle = file;
@@ -6500,22 +6581,7 @@ AddonInstall.prototype = {
       this.addon._sourceBundle = stagedAddon;
 
       // Cache the AddonInternal as it may have updated compatibility info
-      let stream = Cc["@mozilla.org/network/file-output-stream;1"].
-                   createInstance(Ci.nsIFileOutputStream);
-      let converter = Cc["@mozilla.org/intl/converter-output-stream;1"].
-                      createInstance(Ci.nsIConverterOutputStream);
-
-      try {
-        stream.init(stagedJSON, FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE |
-                                FileUtils.MODE_TRUNCATE, FileUtils.PERMS_FILE,
-                               0);
-        converter.init(stream, "UTF-8", 0, 0x0000);
-        converter.writeString(JSON.stringify(this.addon));
-      }
-      finally {
-        converter.close();
-        stream.close();
-      }
+      writeStringToFile(stagedJSON, JSON.stringify(this.addon));
 
       logger.debug("Staged install of " + this.addon.id + " from " + this.sourceURI.spec + " ready; waiting for restart.");
       if (isUpgrade) {
@@ -8307,18 +8373,24 @@ Object.assign(MutableDirectoryInstallLocation.prototype, {
   /**
    * Installs an add-on into the install location.
    *
-   * @param  aId
+   * @param  id
    *         The ID of the add-on to install
-   * @param  aSource
+   * @param  source
    *         The source nsIFile to install from
-   * @param  aExistingAddonID
+   * @param  existingAddonID
    *         The ID of an existing add-on to uninstall at the same time
-   * @param  aCopy
-   *         If false the source files will be moved to the new location,
-   *         otherwise they will only be copied
+   * @param  action
+   *         What to we do with the given source file:
+   *           "move"
+   *           Default action, the source files will be moved to the new
+   *           location,
+   *           "copy"
+   *           The source files will be copied,
+   *           "proxy"
+   *           A "proxy file" is going to refer to the source file path
    * @return an nsIFile indicating where the add-on was installed to
    */
-  installAddon: function(aId, aSource, aExistingAddonID, aCopy) {
+  installAddon: function({ id, source, existingAddonID, action = "move" }) {
     let trashDir = this.getTrashDir();
 
     let transaction = new SafeInstallOperation();
@@ -8341,9 +8413,9 @@ Object.assign(MutableDirectoryInstallLocation.prototype, {
     // If any of these operations fails the finally block will clean up the
     // temporary directory
     try {
-      moveOldAddon(aId);
-      if (aExistingAddonID && aExistingAddonID != aId) {
-        moveOldAddon(aExistingAddonID);
+      moveOldAddon(id);
+      if (existingAddonID && existingAddonID != id) {
+        moveOldAddon(existingAddonID);
 
         {
           // Move the data directories.
@@ -8352,12 +8424,12 @@ Object.assign(MutableDirectoryInstallLocation.prototype, {
            * for porting to OS.File.
            */
           let oldDataDir = FileUtils.getDir(
-            KEY_PROFILEDIR, ["extension-data", aExistingAddonID], false, true
+            KEY_PROFILEDIR, ["extension-data", existingAddonID], false, true
           );
 
           if (oldDataDir.exists()) {
             let newDataDir = FileUtils.getDir(
-              KEY_PROFILEDIR, ["extension-data", aId], false, true
+              KEY_PROFILEDIR, ["extension-data", id], false, true
             );
             if (newDataDir.exists()) {
               let trashData = trashDir.clone();
@@ -8370,15 +8442,16 @@ Object.assign(MutableDirectoryInstallLocation.prototype, {
         }
       }
 
-      if (aCopy) {
-        transaction.copy(aSource, this._directory);
+      if (action == "copy") {
+        transaction.copy(source, this._directory);
       }
-      else {
-        if (aSource.isFile())
-          flushJarCache(aSource);
+      else if (action == "move") {
+        if (source.isFile())
+          flushJarCache(source);
 
-        transaction.moveUnder(aSource, this._directory);
+        transaction.moveUnder(source, this._directory);
       }
+      // Do nothing for the proxy file as we sideload an addon permanently
     }
     finally {
       // It isn't ideal if this cleanup fails but it isn't worth rolling back
@@ -8387,23 +8460,33 @@ Object.assign(MutableDirectoryInstallLocation.prototype, {
         recursiveRemove(trashDir);
       }
       catch (e) {
-        logger.warn("Failed to remove trash directory when installing " + aId, e);
+        logger.warn("Failed to remove trash directory when installing " + id, e);
       }
     }
 
     let newFile = this._directory.clone();
-    newFile.append(aSource.leafName);
+
+    if (action == "proxy") {
+      // When permanently installing sideloaded addon, we just put a proxy file
+      // refering to the addon sources
+      newFile.append(id);
+
+      writeStringToFile(newFile, source.path);
+    } else {
+      newFile.append(source.leafName);
+    }
+
     try {
       newFile.lastModifiedTime = Date.now();
     } catch (e)  {
       logger.warn("failed to set lastModifiedTime on " + newFile.path, e);
     }
-    this._IDToFileMap[aId] = newFile;
-    XPIProvider._addURIMapping(aId, newFile);
+    this._IDToFileMap[id] = newFile;
+    XPIProvider._addURIMapping(id, newFile);
 
-    if (aExistingAddonID && aExistingAddonID != aId &&
-        aExistingAddonID in this._IDToFileMap) {
-      delete this._IDToFileMap[aExistingAddonID];
+    if (existingAddonID && existingAddonID != id &&
+        existingAddonID in this._IDToFileMap) {
+      delete this._IDToFileMap[existingAddonID];
     }
 
     return newFile;
@@ -8810,9 +8893,7 @@ WinRegInstallLocation.prototype = {
     for (let i = 0; i < count; ++i) {
       let id = aKey.getValueName(i);
 
-      let file = Cc["@mozilla.org/file/local;1"].
-                createInstance(Ci.nsIFile);
-      file.initWithPath(aKey.readStringValue(id));
+      let file = new nsIFile(aKey.readStringValue(id));
 
       if (!file.exists()) {
         logger.warn("Ignoring missing add-on in " + file.path);

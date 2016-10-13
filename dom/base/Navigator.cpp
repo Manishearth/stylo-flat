@@ -38,7 +38,6 @@
 #include "mozilla/dom/PowerManager.h"
 #include "mozilla/dom/WakeLock.h"
 #include "mozilla/dom/power/PowerManagerService.h"
-#include "mozilla/dom/CellBroadcast.h"
 #include "mozilla/dom/FlyWebPublishedServer.h"
 #include "mozilla/dom/FlyWebService.h"
 #include "mozilla/dom/IccManager.h"
@@ -90,10 +89,6 @@
 
 #ifdef MOZ_AUDIO_CHANNEL_MANAGER
 #include "AudioChannelManager.h"
-#endif
-
-#ifdef MOZ_B2G_FM
-#include "mozilla/dom/FMRadio.h"
 #endif
 
 #include "nsIDOMGlobalPropertyInitializer.h"
@@ -223,7 +218,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Navigator)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBatteryManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBatteryPromise)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPowerManager)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCellBroadcast)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIccManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMobileMessageManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTelephony)
@@ -294,20 +288,9 @@ Navigator::Invalidate()
 
   mBatteryPromise = nullptr;
 
-#ifdef MOZ_B2G_FM
-  if (mFMRadio) {
-    mFMRadio->Shutdown();
-    mFMRadio = nullptr;
-  }
-#endif
-
   if (mPowerManager) {
     mPowerManager->Shutdown();
     mPowerManager = nullptr;
-  }
-
-  if (mCellBroadcast) {
-    mCellBroadcast = nullptr;
   }
 
   if (mIccManager) {
@@ -1552,30 +1535,6 @@ Navigator::GetMozNotification(ErrorResult& aRv)
   return mNotification;
 }
 
-#ifdef MOZ_B2G_FM
-
-using mozilla::dom::FMRadio;
-
-FMRadio*
-Navigator::GetMozFMRadio(ErrorResult& aRv)
-{
-  if (!mFMRadio) {
-    if (!mWindow) {
-      aRv.Throw(NS_ERROR_UNEXPECTED);
-      return nullptr;
-    }
-
-    NS_ENSURE_TRUE(mWindow->GetDocShell(), nullptr);
-
-    mFMRadio = new FMRadio();
-    mFMRadio->Init(mWindow);
-  }
-
-  return mFMRadio;
-}
-
-#endif  // MOZ_B2G_FM
-
 //*****************************************************************************
 //    Navigator::nsINavigatorBattery
 //*****************************************************************************
@@ -1769,20 +1728,6 @@ Navigator::GetMozMobileConnections(ErrorResult& aRv)
 }
 
 #endif // MOZ_B2G_RIL
-
-CellBroadcast*
-Navigator::GetMozCellBroadcast(ErrorResult& aRv)
-{
-  if (!mCellBroadcast) {
-    if (!mWindow) {
-      aRv.Throw(NS_ERROR_UNEXPECTED);
-      return nullptr;
-    }
-    mCellBroadcast = CellBroadcast::Create(mWindow, aRv);
-  }
-
-  return mCellBroadcast;
-}
 
 Voicemail*
 Navigator::GetMozVoicemail(ErrorResult& aRv)

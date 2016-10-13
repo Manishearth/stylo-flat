@@ -32,6 +32,7 @@
 #include "nsIWorkerDebugger.h"
 #include "nsIXPConnect.h"
 #include "nsPIDOMWindow.h"
+#include "nsGlobalWindow.h"
 
 #include <algorithm>
 #include "ImageContainer.h"
@@ -760,7 +761,8 @@ private:
         return true;
       }
 
-      if (aWorkerPrivate->IsFrozen() || aWorkerPrivate->IsSuspended()) {
+      if (aWorkerPrivate->IsFrozen() ||
+          aWorkerPrivate->IsParentWindowPaused()) {
         MOZ_ASSERT(!IsDebuggerRunnable());
         aWorkerPrivate->QueueRunnable(this);
         return true;
@@ -1159,7 +1161,8 @@ private:
     else {
       AssertIsOnMainThread();
 
-      if (aWorkerPrivate->IsFrozen() || aWorkerPrivate->IsSuspended()) {
+      if (aWorkerPrivate->IsFrozen() ||
+          aWorkerPrivate->IsParentWindowPaused()) {
         MOZ_ASSERT(!IsDebuggerRunnable());
         aWorkerPrivate->QueueRunnable(this);
         return true;
@@ -2179,8 +2182,9 @@ WorkerPrivateParent<Derived>::WorkerPrivateParent(
   mParent(aParent), mScriptURL(aScriptURL),
   mWorkerName(aWorkerName), mLoadingWorkerScript(false),
   mBusyCount(0), mParentStatus(Pending), mParentFrozen(false),
-  mParentSuspended(false), mIsChromeWorker(aIsChromeWorker),
-  mMainThreadObjectsForgotten(false), mWorkerType(aWorkerType),
+  mParentWindowPaused(false), mIsChromeWorker(aIsChromeWorker),
+  mMainThreadObjectsForgotten(false), mIsSecureContext(false),
+  mWorkerType(aWorkerType),
   mCreationTimeStamp(TimeStamp::Now()),
   mCreationTimeHighRes((double)PR_Now() / PR_USEC_PER_MSEC)
 {
@@ -2200,7 +2204,13 @@ WorkerPrivateParent<Derived>::WorkerPrivateParent(
   if (aParent) {
     aParent->AssertIsOnWorkerThread();
 
+    // Note that this copies our parent's secure context state into mJSSettings.
     aParent->CopyJSSettings(mJSSettings);
+
+    // And manually set our mIsSecureContext, though it's not really relevant to
+    // dedicated workers...
+    mIsSecureContext = aParent->IsSecureContext();
+    MOZ_ASSERT_IF(mIsChromeWorker, mIsSecureContext);
 
     MOZ_ASSERT(IsDedicatedWorker());
     mNowBaseTimeStamp = aParent->NowBaseTimeStamp();
@@ -2210,6 +2220,26 @@ WorkerPrivateParent<Derived>::WorkerPrivateParent(
     AssertIsOnMainThread();
 
     RuntimeService::GetDefaultJSSettings(mJSSettings);
+
+    // Our secure context state depends on the kind of worker we have.
+    if (UsesSystemPrincipal() || IsServiceWorker()) {
+      mIsSecureContext = true;
+    } else if (mLoadInfo.mWindow) {
+      // Shared and dedicated workers both inherit the loading window's secure
+      // context state.  Shared workers then prevent windows with a different
+      // secure context state from attaching to them.
+      mIsSecureContext = mLoadInfo.mWindow->IsSecureContext();
+    } else {
+      MOZ_ASSERT_UNREACHABLE("non-chrome worker that is not a service worker "
+                             "that has no parent and no associated window");
+    }
+
+    if (mIsSecureContext) {
+      mJSSettings.chrome.compartmentOptions
+                 .creationOptions().setSecureContext(true);
+      mJSSettings.content.compartmentOptions
+                 .creationOptions().setSecureContext(true);
+    }
 
     if (IsDedicatedWorker() && mLoadInfo.mWindow &&
         mLoadInfo.mWindow->GetPerformance()) {
@@ -2637,7 +2667,7 @@ WorkerPrivateParent<Derived>::Thaw(nsPIDOMWindowInner* aWindow)
 
   // Execute queued runnables before waking up the worker, otherwise the worker
   // could post new messages before we run those that have been queued.
-  if (!IsSuspended() && !mQueuedRunnables.IsEmpty()) {
+  if (!IsParentWindowPaused() && !mQueuedRunnables.IsEmpty()) {
     AssertIsOnMainThread();
     MOZ_ASSERT(IsDedicatedWorker());
 
@@ -2660,24 +2690,24 @@ WorkerPrivateParent<Derived>::Thaw(nsPIDOMWindowInner* aWindow)
 
 template <class Derived>
 void
-WorkerPrivateParent<Derived>::Suspend()
+WorkerPrivateParent<Derived>::ParentWindowPaused()
 {
   AssertIsOnMainThread();
 
-  MOZ_ASSERT(!mParentSuspended, "Suspended more than once!");
+  MOZ_ASSERT(!mParentWindowPaused, "Suspended more than once!");
 
-  mParentSuspended = true;
+  mParentWindowPaused = true;
 }
 
 template <class Derived>
 void
-WorkerPrivateParent<Derived>::Resume()
+WorkerPrivateParent<Derived>::ParentWindowResumed()
 {
   AssertIsOnMainThread();
 
-  MOZ_ASSERT(mParentSuspended, "Resumed more than once!");
+  MOZ_ASSERT(mParentWindowPaused, "Resumed more than once!");
 
-  mParentSuspended = false;
+  mParentWindowPaused = false;
 
   {
     MutexAutoLock lock(mMutex);
@@ -5104,6 +5134,11 @@ WorkerPrivate::FreezeInternal()
   NS_ASSERTION(!mFrozen, "Already frozen!");
 
   mFrozen = true;
+
+  for (uint32_t index = 0; index < mChildWorkers.Length(); index++) {
+    mChildWorkers[index]->Freeze(nullptr);
+  }
+
   return true;
 }
 
@@ -5113,6 +5148,10 @@ WorkerPrivate::ThawInternal()
   AssertIsOnWorkerThread();
 
   NS_ASSERTION(mFrozen, "Not yet frozen!");
+
+  for (uint32_t index = 0; index < mChildWorkers.Length(); index++) {
+    mChildWorkers[index]->Thaw(nullptr);
+  }
 
   mFrozen = false;
   return true;

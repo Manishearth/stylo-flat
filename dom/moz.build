@@ -47,7 +47,6 @@ DIRS += [
     'browser-element',
     'cache',
     'canvas',
-    'cellbroadcast',
     'contacts',
     'crypto',
     'phonenumberutils',
@@ -58,7 +57,6 @@ DIRS += [
     'filehandle',
     'filesystem',
     'flyweb',
-    'fmradio',
     'gamepad',
     'geolocation',
     'grid',
@@ -141,7 +139,6 @@ if CONFIG['MOZ_SECUREELEMENT']:
 if CONFIG['MOZ_B2G']:
     DIRS += [
         'downloads',
-        'identity'
     ]
 
 DIRS += ['presentation']

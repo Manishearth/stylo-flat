@@ -480,7 +480,7 @@ public:
    *
    * Can be called from any thread.
    */
-  uint64_t GetAsyncContainerID() const;
+  uint64_t GetAsyncContainerID();
 
   /**
    * Returns if the container currently has an image.
@@ -596,6 +596,8 @@ private:
   // calling this function!
   void EnsureActiveImage();
 
+  void EnsureImageClient(bool aCreate);
+
   void NotifyCompositeInternal(const ImageCompositeNotification& aNotification);
 
   // ReentrantMonitor to protect thread safe access to the "current
@@ -686,6 +688,7 @@ struct PlanarYCbCrData {
   uint32_t mPicY;
   gfx::IntSize mPicSize;
   StereoMode mStereoMode;
+  YUVColorSpace mYUVColorSpace;
 
   gfx::IntRect GetPictureRect() const {
     return gfx::IntRect(mPicX, mPicY,
@@ -698,6 +701,7 @@ struct PlanarYCbCrData {
     , mCbChannel(nullptr), mCrChannel(nullptr)
     , mCbCrStride(0), mCbCrSize(0, 0) , mCbSkip(0), mCrSkip(0)
     , mPicX(0), mPicY(0), mPicSize(0, 0), mStereoMode(StereoMode::MONO)
+    , mYUVColorSpace(YUVColorSpace::BT601)
   {}
 };
 

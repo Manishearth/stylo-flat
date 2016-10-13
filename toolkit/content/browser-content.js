@@ -647,17 +647,23 @@ var Printing = {
     try {
       let print = contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                                .getInterface(Ci.nsIWebBrowserPrint);
+
+      if (print.doingPrintPreview) {
+        this.logKeyedTelemetry("PRINT_DIALOG_OPENED_COUNT", "FROM_PREVIEW");
+      } else {
+        this.logKeyedTelemetry("PRINT_DIALOG_OPENED_COUNT", "FROM_PAGE");
+      }
+
       print.print(printSettings, null);
 
-      let histogram = Services.telemetry.getKeyedHistogramById("PRINT_COUNT");
       if (print.doingPrintPreview) {
         if (simplifiedMode) {
-          histogram.add("SIMPLIFIED");
+          this.logKeyedTelemetry("PRINT_COUNT", "SIMPLIFIED");
         } else {
-          histogram.add("WITH_PREVIEW");
+          this.logKeyedTelemetry("PRINT_COUNT", "WITH_PREVIEW");
         }
       } else {
-        histogram.add("WITHOUT_PREVIEW");
+        this.logKeyedTelemetry("PRINT_COUNT", "WITHOUT_PREVIEW");
       }
     } catch (e) {
       // Pressing cancel is expressed as an NS_ERROR_ABORT return value,
@@ -681,6 +687,11 @@ var Printing = {
       PSSVC.savePrintSettingsToPrefs(printSettings, false,
                                      printSettings.kInitSavePrinterName);
     }
+  },
+
+  logKeyedTelemetry(id, key) {
+    let histogram = Services.telemetry.getKeyedHistogramById(id);
+    histogram.add(key);
   },
 
   updatePageCount() {
@@ -1509,3 +1520,151 @@ let AutoCompletePopup = {
 }
 
 AutoCompletePopup.init();
+
+/**
+ * DateTimePickerListener is the communication channel between the input box
+ * (content) for date/time input types and its picker (chrome).
+ */
+let DateTimePickerListener = {
+  /**
+   * On init, just listen for the event to open the picker, once the picker is
+   * opened, we'll listen for update and close events.
+   */
+  init: function() {
+    addEventListener("MozOpenDateTimePicker", this);
+    this._inputElement = null;
+
+    addEventListener("unload", () => {
+      this.uninit();
+    });
+  },
+
+  uninit: function() {
+    removeEventListener("MozOpenDateTimePicker", this);
+    this._inputElement = null;
+  },
+
+  /**
+   * Cleanup function called when picker is closed.
+   */
+  close: function() {
+    this.removeListeners();
+    this._inputElement.setDateTimePickerState(false);
+    this._inputElement = null;
+  },
+
+  /**
+   * Called after picker is opened to start listening for input box update
+   * events.
+   */
+  addListeners: function() {
+    addEventListener("MozUpdateDateTimePicker", this);
+    addEventListener("MozCloseDateTimePicker", this);
+    addEventListener("pagehide", this);
+
+    addMessageListener("FormDateTime:PickerValueChanged", this);
+    addMessageListener("FormDateTime:PickerClosed", this);
+  },
+
+  /**
+   * Stop listeneing for events when picker is closed.
+   */
+  removeListeners: function() {
+    removeEventListener("MozUpdateDateTimePicker", this);
+    removeEventListener("MozCloseDateTimePicker", this);
+    removeEventListener("pagehide", this);
+
+    removeMessageListener("FormDateTime:PickerValueChanged", this);
+    removeMessageListener("FormDateTime:PickerClosed", this);
+  },
+
+  /**
+   * Helper function that returns the CSS direction property of the element.
+   */
+  getComputedDirection: function(aElement) {
+    return aElement.ownerDocument.defaultView.getComputedStyle(aElement)
+      .getPropertyValue("direction");
+  },
+
+  /**
+   * Helper function that returns the rect of the element, which is the position
+   * in "screen" coordinates.
+   */
+  getBoundingContentRect: function(aElement) {
+    return BrowserUtils.getElementBoundingScreenRect(aElement);
+  },
+
+  /**
+   * nsIMessageListener.
+   */
+  receiveMessage: function(aMessage) {
+    switch (aMessage.name) {
+      case "FormDateTime:PickerClosed": {
+        this.close();
+        break;
+      }
+      case "FormDateTime:PickerValueChanged": {
+        this._inputElement.updateDateTimeInputBox(aMessage.data);
+        break;
+      }
+      default:
+        break;
+    }
+  },
+
+  /**
+   * nsIDOMEventListener, for chrome events sent by the input element and other
+   * DOM events.
+   */
+  handleEvent: function(aEvent) {
+    switch (aEvent.type) {
+      case "MozOpenDateTimePicker": {
+        if (!(aEvent.originalTarget instanceof content.HTMLInputElement)) {
+          return;
+        }
+        this._inputElement = aEvent.originalTarget;
+        this._inputElement.setDateTimePickerState(true);
+        this.addListeners();
+
+        let value = this._inputElement.getDateTimeInputBoxValue();
+        sendAsyncMessage("FormDateTime:OpenPicker", {
+          rect: this.getBoundingContentRect(this._inputElement),
+          dir: this.getComputedDirection(this._inputElement),
+          type: this._inputElement.type,
+          detail: {
+            // Pass partial value if it's available, otherwise pass input
+            // element's value.
+            value: Object.keys(value).length > 0 ? value
+                                                 : this._inputElement.value,
+            step: this._inputElement.step,
+            min: this._inputElement.min,
+            max: this._inputElement.max,
+          },
+        });
+        break;
+      }
+      case "MozUpdateDateTimePicker": {
+        let value = this._inputElement.getDateTimeInputBoxValue();
+        sendAsyncMessage("FormDateTime:UpdatePicker", { value });
+        break;
+      }
+      case "MozCloseDateTimePicker": {
+        sendAsyncMessage("FormDateTime:ClosePicker");
+        this.close();
+        break;
+      }
+      case "pagehide": {
+        if (this._inputElement &&
+            this._inputElement.ownerDocument == aEvent.target) {
+          sendAsyncMessage("FormDateTime:ClosePicker");
+          this.close();
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  },
+}
+
+DateTimePickerListener.init();

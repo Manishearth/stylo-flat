@@ -1272,7 +1272,7 @@ impl<'a> ImmutableFlowUtils for &'a Flow {
     /// as it's harder to understand.
     fn generate_missing_child_flow<N: ThreadSafeLayoutNode>(self, node: &N, ctx: &LayoutContext) -> FlowRef {
         let style_context = ctx.style_context();
-        let mut style = node.style(style_context).clone();
+        let mut style = node.style(style_context);
         match self.class() {
             FlowClass::Table | FlowClass::TableRowGroup => {
                 properties::modify_style_for_anonymous_table_object(
@@ -1282,7 +1282,7 @@ impl<'a> ImmutableFlowUtils for &'a Flow {
                     node.opaque(),
                     PseudoElementType::Normal,
                     style,
-                    node.selected_style(style_context).clone(),
+                    node.selected_style(style_context),
                     node.restyle_damage(),
                     SpecificFragmentInfo::TableRow);
                 Arc::new(TableRowFlow::from_fragment(fragment))
@@ -1295,7 +1295,7 @@ impl<'a> ImmutableFlowUtils for &'a Flow {
                     node.opaque(),
                     PseudoElementType::Normal,
                     style,
-                    node.selected_style(style_context).clone(),
+                    node.selected_style(style_context),
                     node.restyle_damage(),
                     SpecificFragmentInfo::TableCell);
                 let hide = node.style(style_context).get_inheritedtable().empty_cells == empty_cells::T::hide;
@@ -1309,7 +1309,7 @@ impl<'a> ImmutableFlowUtils for &'a Flow {
                     Fragment::from_opaque_node_and_style(node.opaque(),
                                                          PseudoElementType::Normal,
                                                          style,
-                                                         node.selected_style(style_context).clone(),
+                                                         node.selected_style(style_context),
                                                          node.restyle_damage(),
                                                          SpecificFragmentInfo::Generic);
                 Arc::new(BlockFlow::from_fragment(fragment, None))
@@ -1401,7 +1401,7 @@ impl<'a> ImmutableFlowUtils for &'a Flow {
         for kid in base(self).children.iter().rev() {
             if kid.is_inline_flow() {
                 if let Some(baseline_offset) = kid.as_inline().baseline_offset_of_last_line() {
-                    return Some(baseline_offset)
+                    return Some(base(kid).position.start.b + baseline_offset)
                 }
             }
             if kid.is_block_like() &&
@@ -1576,7 +1576,7 @@ impl ContainingBlockLink {
                 if flow.is_block_like() {
                     flow.as_block().explicit_block_containing_size(shared_context)
                 } else if flow.is_inline_flow() {
-                    Some(flow.as_inline().minimum_block_size_above_baseline)
+                    Some(flow.as_inline().minimum_line_metrics.space_above_baseline)
                 } else {
                     None
                 }

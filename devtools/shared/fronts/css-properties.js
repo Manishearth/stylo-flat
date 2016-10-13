@@ -205,9 +205,10 @@ const initCssProperties = Task.async(function* (toolbox) {
   // Get the list dynamically if the cssProperties actor exists.
   if (toolbox.target.hasActor("cssProperties")) {
     front = CssPropertiesFront(client, toolbox.target.form);
-    const serverDB = yield front.getCSSDatabase(getClientBrowserVersion(toolbox));
+    const serverDB = yield front.getCSSDatabase();
 
-    // The serverDB will be blank if the browser versions match, so use the static list.
+    // Ensure the database was returned in a format that is understood.
+    // Older versions of the protocol could return a blank database.
     if (!serverDB.properties && !serverDB.margin) {
       db = CSS_PROPERTIES_DB;
     } else {
@@ -250,16 +251,6 @@ function getClientCssProperties() {
 }
 
 /**
- * Get the current browser version.
- * @returns {string} The browser version.
- */
-function getClientBrowserVersion(toolbox) {
-  const regexResult = toolbox.win.navigator
-                             .userAgent.match(/Firefox\/(\d+)\.\d/);
-  return Array.isArray(regexResult) ? regexResult[1] : "0";
-}
-
-/**
  * Even if the target has the cssProperties actor, the returned data may not be in the
  * same shape or have all of the data we need. This normalizes the data and fills in
  * any missing information like color values.
@@ -277,28 +268,22 @@ function normalizeCssData(db) {
     // Fill in any missing DB information from the static database.
     db = Object.assign({}, CSS_PROPERTIES_DB, db);
 
-    // Add "supports" information to the css properties if it's missing.
-    if (!db.properties.color.supports) {
-      for (let name in db.properties) {
-        if (typeof CSS_PROPERTIES_DB.properties[name] === "object") {
-          db.properties[name].supports = CSS_PROPERTIES_DB.properties[name].supports;
-        }
+    for (let name in db.properties) {
+      // Skip the current property if we can't find it in CSS_PROPERTIES_DB.
+      if (typeof CSS_PROPERTIES_DB.properties[name] !== "object") {
+        continue;
       }
-    }
 
-    // Add "values" information to the css properties if it's missing.
-    if (!db.properties.color.values) {
-      for (let name in db.properties) {
-        if (typeof CSS_PROPERTIES_DB.properties[name] === "object") {
-          db.properties[name].values = CSS_PROPERTIES_DB.properties[name].values;
-        }
+      // Add "supports" information to the css properties if it's missing.
+      if (!db.properties.color.supports) {
+        db.properties[name].supports = CSS_PROPERTIES_DB.properties[name].supports;
       }
-    }
-
-    // Add "subproperties" information to the css properties if it's
-    // missing.
-    if (!db.properties.background.subproperties) {
-      for (let name in db.properties) {
+      // Add "values" information to the css properties if it's missing.
+      if (!db.properties.color.values) {
+        db.properties[name].values = CSS_PROPERTIES_DB.properties[name].values;
+      }
+      // Add "subproperties" information to the css properties if it's missing.
+      if (!db.properties.background.subproperties) {
         db.properties[name].subproperties =
           CSS_PROPERTIES_DB.properties[name].subproperties;
       }
@@ -320,7 +305,8 @@ function reattachCssColorValues(db) {
 
     for (let name in db.properties) {
       const property = db.properties[name];
-      if (property.values[0] === "COLOR") {
+      // "values" can be undefined if {name} was not found in CSS_PROPERTIES_DB.
+      if (property.values && property.values[0] === "COLOR") {
         property.values.shift();
         property.values = property.values.concat(colors).sort();
       }

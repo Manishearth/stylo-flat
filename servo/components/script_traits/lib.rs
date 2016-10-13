@@ -6,8 +6,8 @@
 //! The traits are here instead of in script so that these modules won't have
 //! to depend on script.
 
-#![feature(custom_derive, plugin)]
-#![plugin(heapsize_plugin, plugins, serde_macros)]
+#![feature(custom_derive, plugin, proc_macro, rustc_attrs, structural_match)]
+#![plugin(heapsize_plugin, plugins)]
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
@@ -28,6 +28,8 @@ extern crate offscreen_gl_context;
 extern crate profile_traits;
 extern crate rustc_serialize;
 extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 extern crate style_traits;
 extern crate time;
 extern crate url;
@@ -64,7 +66,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::mpsc::{Receiver, Sender};
-use style_traits::{PagePx, ViewportPx};
+use style_traits::{PagePx, UnsafeNode, ViewportPx};
 use url::Url;
 use util::ipc::OptionalOpaqueIpcSender;
 use webdriver_msg::{LoadStatus, WebDriverScriptCommand};
@@ -195,6 +197,8 @@ pub enum ConstellationControlMsg {
     WebDriverScriptCommand(PipelineId, WebDriverScriptCommand),
     /// Notifies script thread that all animations are done
     TickAllAnimations(PipelineId),
+    /// Notifies the script thread of a transition end
+    TransitionEnd(UnsafeNode, String, f64),
     /// Notifies the script thread that a new Web font has been loaded, and thus the page should be
     /// reflowed.
     WebFontLoaded(PipelineId),
@@ -236,6 +240,7 @@ impl fmt::Debug for ConstellationControlMsg {
             FocusIFrame(..) => "FocusIFrame",
             WebDriverScriptCommand(..) => "WebDriverScriptCommand",
             TickAllAnimations(..) => "TickAllAnimations",
+            TransitionEnd(..) => "TransitionEnd",
             WebFontLoaded(..) => "WebFontLoaded",
             DispatchFrameLoadEvent { .. } => "DispatchFrameLoadEvent",
             FramedContentChanged(..) => "FramedContentChanged",
@@ -449,6 +454,8 @@ pub struct IFrameLoadInfo {
     pub load_data: Option<LoadData>,
     /// Pipeline ID of the parent of this iframe
     pub parent_pipeline_id: PipelineId,
+    /// The ID for this iframe.
+    pub frame_id: FrameId,
     /// The old pipeline ID for this iframe, if a page was previously loaded.
     pub old_pipeline_id: Option<PipelineId>,
     /// The new pipeline ID that the iframe has generated.
@@ -663,6 +670,8 @@ pub struct WorkerGlobalScopeInit {
     pub scheduler_chan: IpcSender<TimerEventRequest>,
     /// The worker id
     pub worker_id: WorkerId,
+    /// The pipeline id
+    pub pipeline_id: PipelineId,
 }
 
 /// Common entities representing a network load origin

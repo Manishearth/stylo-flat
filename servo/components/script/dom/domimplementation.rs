@@ -8,7 +8,6 @@ use dom::bindings::codegen::Bindings::DOMImplementationBinding::DOMImplementatio
 use dom::bindings::codegen::Bindings::DocumentBinding::DocumentMethods;
 use dom::bindings::codegen::Bindings::NodeBinding::NodeMethods;
 use dom::bindings::error::Fallible;
-use dom::bindings::global::GlobalRef;
 use dom::bindings::inheritance::Castable;
 use dom::bindings::js::{JS, Root};
 use dom::bindings::reflector::{Reflector, reflect_dom_object};
@@ -43,7 +42,7 @@ impl DOMImplementation {
     pub fn new(document: &Document) -> Root<DOMImplementation> {
         let window = document.window();
         reflect_dom_object(box DOMImplementation::new_inherited(document),
-                           GlobalRef::Window(window),
+                           window,
                            DOMImplementationBinding::Wrap)
     }
 }
@@ -136,7 +135,7 @@ impl DOMImplementationMethods for DOMImplementation {
         {
             // Step 3.
             let doc_node = doc.upcast::<Node>();
-            let doc_type = DocumentType::new(DOMString::from("html"), None, None, doc.r());
+            let doc_type = DocumentType::new(DOMString::from("html"), None, None, &doc);
             doc_node.AppendChild(doc_type.upcast()).unwrap();
         }
 
@@ -145,14 +144,14 @@ impl DOMImplementationMethods for DOMImplementation {
             let doc_node = doc.upcast::<Node>();
             let doc_html = Root::upcast::<Node>(HTMLHtmlElement::new(atom!("html"),
                                                                      None,
-                                                                     doc.r()));
+                                                                     &doc));
             doc_node.AppendChild(&doc_html).expect("Appending failed");
 
             {
                 // Step 5.
                 let doc_head = Root::upcast::<Node>(HTMLHeadElement::new(atom!("head"),
                                                                          None,
-                                                                         doc.r()));
+                                                                         &doc));
                 doc_html.AppendChild(&doc_head).unwrap();
 
                 // Step 6.
@@ -163,18 +162,18 @@ impl DOMImplementationMethods for DOMImplementation {
                         let doc_title =
                             Root::upcast::<Node>(HTMLTitleElement::new(atom!("title"),
                                                                        None,
-                                                                       doc.r()));
+                                                                       &doc));
                         doc_head.AppendChild(&doc_title).unwrap();
 
                         // Step 6.2.
-                        let title_text = Text::new(title_str, doc.r());
+                        let title_text = Text::new(title_str, &doc);
                         doc_title.AppendChild(title_text.upcast()).unwrap();
                     }
                 }
             }
 
             // Step 7.
-            let doc_body = HTMLBodyElement::new(atom!("body"), None, doc.r());
+            let doc_body = HTMLBodyElement::new(atom!("body"), None, &doc);
             doc_html.AppendChild(doc_body.upcast()).unwrap();
         }
 
