@@ -49,6 +49,10 @@ class LIRGenerator : public LIRGeneratorSpecific
     MOZ_MUST_USE bool generate();
 
   private:
+    LBoxAllocation useBoxFixedAtStart(MDefinition* mir, Register reg1, Register reg2) {
+        return useBoxFixed(mir, reg1, reg2, /* useAtStart = */ true);
+    }
+
     LBoxAllocation useBoxFixedAtStart(MDefinition* mir, ValueOperand op);
     LBoxAllocation useBoxAtStart(MDefinition* mir, LUse::Policy policy = LUse::REGISTER);
 
@@ -201,7 +205,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     void visitPostWriteElementBarrier(MPostWriteElementBarrier* ins);
     void visitArrayLength(MArrayLength* ins);
     void visitSetArrayLength(MSetArrayLength* ins);
-    void visitGetNextMapEntryForIterator(MGetNextMapEntryForIterator* ins);
+    void visitGetNextEntryForIterator(MGetNextEntryForIterator* ins);
     void visitTypedArrayLength(MTypedArrayLength* ins);
     void visitTypedArrayElements(MTypedArrayElements* ins);
     void visitSetDisjointTypedElements(MSetDisjointTypedElements* ins);
@@ -318,6 +322,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     void visitDebugger(MDebugger* ins);
     void visitNewTarget(MNewTarget* ins);
     void visitArrowNewTarget(MArrowNewTarget* ins);
+    void visitNaNToZero(MNaNToZero *ins);
     void visitAtomicIsLockFree(MAtomicIsLockFree* ins);
     void visitGuardSharedTypedArray(MGuardSharedTypedArray* ins);
     void visitCheckReturn(MCheckReturn* ins);

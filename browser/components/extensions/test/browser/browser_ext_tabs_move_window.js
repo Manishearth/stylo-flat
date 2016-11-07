@@ -27,6 +27,16 @@ add_task(function* () {
             browser.test.assertEq(tabs[0].windowId, destination.windowId);
             browser.test.notifyPass("tabs.move.window");
           });
+
+        // Assuming that this windowId does not exist.
+        browser.tabs.move(source.id, {windowId: 123144576, index: 0})
+        .then(
+          tabs => { browser.test.fail("Promise should not resolve"); },
+          e => {
+            browser.test.assertTrue(/Invalid window/.test(e),
+                                    "Invalid window should be in error");
+          }
+        );
       });
     },
   });
@@ -39,4 +49,59 @@ add_task(function* () {
     yield BrowserTestUtils.removeTab(tab);
   }
   yield BrowserTestUtils.closeWindow(window1);
+});
+
+add_task(function* test_currentWindowAfterTabMoved() {
+  const files = {
+    "current.html": "<meta charset=utf-8><script src=current.js></script>",
+    "current.js": function() {
+      browser.test.onMessage.addListener(msg => {
+        if (msg === "current") {
+          browser.windows.getCurrent(win => {
+            browser.test.sendMessage("id", win.id);
+          });
+        }
+      });
+      browser.test.sendMessage("ready");
+    },
+  };
+
+  function background() {
+    let tabId;
+    const url = browser.extension.getURL("current.html");
+    browser.tabs.create({url}).then(tab => {
+      tabId = tab.id;
+    });
+    browser.test.onMessage.addListener(msg => {
+      if (msg === "move") {
+        browser.windows.create({tabId}).then(() => {
+          browser.test.sendMessage("moved");
+        });
+      } else if (msg === "close") {
+        browser.tabs.remove(tabId).then(() => {
+          browser.test.sendMessage("done");
+        });
+      }
+    });
+  }
+
+  const extension = ExtensionTestUtils.loadExtension({files, background});
+
+  yield extension.startup();
+  yield extension.awaitMessage("ready");
+
+  extension.sendMessage("current");
+  const first = yield extension.awaitMessage("id");
+
+  extension.sendMessage("move");
+  yield extension.awaitMessage("moved");
+
+  extension.sendMessage("current");
+  const second = yield extension.awaitMessage("id");
+
+  isnot(first, second, "current window id is different after moving the tab");
+
+  extension.sendMessage("close");
+  yield extension.awaitMessage("done");
+  yield extension.unload();
 });

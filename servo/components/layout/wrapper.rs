@@ -33,49 +33,36 @@
 use core::nonzero::NonZero;
 use data::{LayoutDataFlags, PersistentLayoutData};
 use script_layout_interface::{OpaqueStyleAndLayoutData, PartialPersistentLayoutData};
-use script_layout_interface::wrapper_traits::{LayoutNode, ThreadSafeLayoutNode};
+use script_layout_interface::wrapper_traits::{LayoutNode, ThreadSafeLayoutElement, ThreadSafeLayoutNode};
+use script_layout_interface::wrapper_traits::GetLayoutData;
 use style::atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut};
 use style::computed_values::content::{self, ContentItem};
+use style::dom::TElement;
+use style::traversal::prepare_for_styling;
 
-pub type NonOpaqueStyleAndLayoutData = *mut AtomicRefCell<PersistentLayoutData>;
+pub type NonOpaqueStyleAndLayoutData = AtomicRefCell<PersistentLayoutData>;
+
+pub unsafe fn drop_style_and_layout_data(data: OpaqueStyleAndLayoutData) {
+    let ptr: *mut AtomicRefCell<PartialPersistentLayoutData> = *data.ptr;
+    let non_opaque: *mut NonOpaqueStyleAndLayoutData = ptr as *mut _;
+    let _ = Box::from_raw(non_opaque);
+}
 
 pub trait LayoutNodeLayoutData {
     /// Similar to borrow_data*, but returns the full PersistentLayoutData rather
-    /// than only the PersistentStyleData.
+    /// than only the style::data::ElementData.
     fn borrow_layout_data(&self) -> Option<AtomicRef<PersistentLayoutData>>;
     fn mutate_layout_data(&self) -> Option<AtomicRefMut<PersistentLayoutData>>;
-    fn initialize_data(self);
     fn flow_debug_id(self) -> usize;
 }
 
-impl<T: LayoutNode> LayoutNodeLayoutData for T {
+impl<T: GetLayoutData> LayoutNodeLayoutData for T {
     fn borrow_layout_data(&self) -> Option<AtomicRef<PersistentLayoutData>> {
-        unsafe {
-            self.get_style_and_layout_data().map(|opaque| {
-                let container = *opaque.ptr as NonOpaqueStyleAndLayoutData;
-                (*container).borrow()
-            })
-        }
+        self.get_raw_data().map(|d| d.borrow())
     }
 
     fn mutate_layout_data(&self) -> Option<AtomicRefMut<PersistentLayoutData>> {
-        unsafe {
-            self.get_style_and_layout_data().map(|opaque| {
-                let container = *opaque.ptr as NonOpaqueStyleAndLayoutData;
-                (*container).borrow_mut()
-            })
-        }
-    }
-
-    fn initialize_data(self) {
-        if self.borrow_layout_data().is_none() {
-            let ptr: NonOpaqueStyleAndLayoutData =
-                Box::into_raw(box AtomicRefCell::new(PersistentLayoutData::new()));
-            let opaque = OpaqueStyleAndLayoutData {
-                ptr: unsafe { NonZero::new(ptr as *mut AtomicRefCell<PartialPersistentLayoutData>) }
-            };
-            self.init_style_and_layout_data(opaque);
-        }
+        self.get_raw_data().map(|d| d.borrow_mut())
     }
 
     fn flow_debug_id(self) -> usize {
@@ -83,21 +70,47 @@ impl<T: LayoutNode> LayoutNodeLayoutData for T {
     }
 }
 
+pub trait GetRawData {
+    fn get_raw_data(&self) -> Option<&NonOpaqueStyleAndLayoutData>;
+}
+
+impl<T: GetLayoutData> GetRawData for T {
+    fn get_raw_data(&self) -> Option<&NonOpaqueStyleAndLayoutData> {
+        self.get_style_and_layout_data().map(|opaque| {
+            let container = *opaque.ptr as *mut NonOpaqueStyleAndLayoutData;
+            unsafe { &*container }
+        })
+    }
+}
+
+pub trait LayoutNodeHelpers {
+    fn initialize_data(&self);
+    fn clear_data(&self);
+}
+
+impl<T: LayoutNode> LayoutNodeHelpers for T {
+    fn initialize_data(&self) {
+        if self.get_raw_data().is_none() {
+            let ptr: *mut NonOpaqueStyleAndLayoutData =
+                Box::into_raw(box AtomicRefCell::new(PersistentLayoutData::new()));
+            let opaque = OpaqueStyleAndLayoutData {
+                ptr: unsafe { NonZero::new(ptr as *mut AtomicRefCell<PartialPersistentLayoutData>) }
+            };
+            unsafe { self.init_style_and_layout_data(opaque) };
+            if let Some(el) = self.as_element() {
+                let _ = prepare_for_styling(el, el.get_data().unwrap());
+            }
+        };
+    }
+
+    fn clear_data(&self) {
+        if self.get_raw_data().is_some() {
+            unsafe { drop_style_and_layout_data(self.take_style_and_layout_data()) };
+        }
+    }
+}
+
 pub trait ThreadSafeLayoutNodeHelpers {
-    fn flow_debug_id(self) -> usize;
-
-    /// Borrows the layout data immutably. Fails on a conflicting borrow.
-    ///
-    /// TODO(pcwalton): Make this private. It will let us avoid borrow flag checks in some cases.
-    #[inline(always)]
-    fn borrow_layout_data(&self) -> Option<AtomicRef<PersistentLayoutData>>;
-
-    /// Borrows the layout data mutably. Fails on a conflicting borrow.
-    ///
-    /// TODO(pcwalton): Make this private. It will let us avoid borrow flag checks in some cases.
-    #[inline(always)]
-    fn mutate_layout_data(&self) -> Option<AtomicRefMut<PersistentLayoutData>>;
-
     /// Returns the layout data flags for this node.
     fn flags(self) -> LayoutDataFlags;
 
@@ -115,28 +128,6 @@ pub trait ThreadSafeLayoutNodeHelpers {
 }
 
 impl<T: ThreadSafeLayoutNode> ThreadSafeLayoutNodeHelpers for T {
-    fn flow_debug_id(self) -> usize {
-        self.borrow_layout_data().map_or(0, |d| d.flow_construction_result.debug_id())
-    }
-
-    fn borrow_layout_data(&self) -> Option<AtomicRef<PersistentLayoutData>> {
-        unsafe {
-            self.get_style_and_layout_data().map(|opaque| {
-                let container = *opaque.ptr as NonOpaqueStyleAndLayoutData;
-                (*container).borrow()
-            })
-        }
-    }
-
-    fn mutate_layout_data(&self) -> Option<AtomicRefMut<PersistentLayoutData>> {
-        unsafe {
-            self.get_style_and_layout_data().map(|opaque| {
-                let container = *opaque.ptr as NonOpaqueStyleAndLayoutData;
-                (*container).borrow_mut()
-            })
-        }
-    }
-
     fn flags(self) -> LayoutDataFlags {
             self.borrow_layout_data().as_ref().unwrap().flags
     }
@@ -151,7 +142,7 @@ impl<T: ThreadSafeLayoutNode> ThreadSafeLayoutNodeHelpers for T {
 
     fn text_content(&self) -> TextContent {
         if self.get_pseudo_element_type().is_replaced_content() {
-            let style = self.resolved_style();
+            let style = self.as_element().unwrap().resolved_style();
 
             return match style.as_ref().get_counters().content {
                 content::T::Content(ref value) if !value.is_empty() => {

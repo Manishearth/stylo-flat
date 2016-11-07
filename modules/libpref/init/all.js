@@ -132,14 +132,17 @@ pref("dom.indexedDB.logging.profiler-marks", false);
 // Whether or not File Handle is enabled.
 pref("dom.fileHandle.enabled", true);
 
-// Whether window.oninstall from "W3C Web Manifest" is enabled
-pref("dom.manifest.oninstall", false);
+// Whether window.onappinstalled from "W3C Web Manifest" is enabled
+pref("dom.manifest.onappinstalled", false);
 
 // Whether or not selection events are enabled
-#ifdef NIGHTLY_BUILD
 pref("dom.select_events.enabled", true);
+
+// Whether or not selection events on text controls are enabled
+#ifdef NIGHTLY_BUILD
+pref("dom.select_events.textcontrols.enabled", true);
 #else
-pref("dom.select_events.enabled", false);
+pref("dom.select_events.textcontrols.enabled", false);
 #endif
 
 // Whether or not Web Workers are enabled.
@@ -185,6 +188,13 @@ pref("dom.enable_performance_observer", true);
 pref("dom.enable_performance_observer", false);
 #endif
 
+// Enable requestIdleCallback API
+#ifdef NIGHTLY_BUILD
+pref("dom.requestIdleCallback.enabled", true);
+#else
+pref("dom.requestIdleCallback.enabled", false);
+#endif
+
 // Whether the Gamepad API is enabled
 pref("dom.gamepad.enabled", true);
 pref("dom.gamepad.test.enabled", false);
@@ -201,9 +211,6 @@ pref("dom.keyboardevent.code.enabled", true);
 // even during composition (keypress events are never fired during composition
 // even if this is true).
 pref("dom.keyboardevent.dispatch_during_composition", false);
-
-// Whether the UndoManager API is enabled
-pref("dom.undo_manager.enabled", false);
 
 // Whether URL,Location,Link::GetHash should be percent encoded
 // in setter and percent decoded in getter (old behaviour = true)
@@ -345,8 +352,9 @@ pref("media.wmf.enabled", true);
 pref("media.wmf.decoder.thread-count", -1);
 pref("media.wmf.low-latency.enabled", false);
 pref("media.wmf.skip-blacklist", false);
+pref("media.wmf.vp9.enabled", true);
 pref("media.windows-media-foundation.allow-d3d11-dxva", true);
-pref("media.wmf.disable-d3d11-for-dlls", "igd10iumd32.dll: 20.19.15.4444, 20.19.15.4424, 20.19.15.4409, 20.19.15.4390, 20.19.15.4380, 20.19.15.4360, 10.18.10.4358, 20.19.15.4331, 20.19.15.4312, 20.19.15.4300, 10.18.15.4281, 10.18.15.4279, 10.18.10.4276, 10.18.15.4268, 10.18.15.4256, 10.18.10.4252, 10.18.15.4248, 10.18.14.4112, 10.18.10.3958, 10.18.10.3496, 10.18.10.3431, 10.18.10.3412, 10.18.10.3355, 9.18.10.3234, 9.18.10.3071, 9.18.10.3055, 9.18.10.3006; igd10umd32.dll: 9.17.10.4229, 9.17.10.3040, 9.17.10.2857, 8.15.10.2274, 8.15.10.2272, 8.15.10.2246, 8.15.10.1840, 8.15.10.1808; igd10umd64.dll: 9.17.10.4229, 10.18.10.3496; isonyvideoprocessor.dll: 4.1.2247.8090, 4.1.2153.6200; tosqep.dll: 1.2.15.526, 1.1.12.201, 1.0.11.318, 1.0.11.215, 1.0.10.1224; tosqep64.dll: 1.1.12.201, 1.0.11.215; nvwgf2um.dll: 10.18.13.6510, 10.18.13.5891, 10.18.13.5887, 10.18.13.5582, 10.18.13.5382, 9.18.13.4195, 9.18.13.3165; atidxx32.dll: 8.17.10.671, 8.17.10.661, 8.17.10.648, 8.17.10.644, 8.17.10.625, 8.17.10.605, 8.17.10.581, 8.17.10.569, 8.17.10.560, 8.17.10.545, 8.17.10.539, 8.17.10.531, 8.17.10.525, 8.17.10.520, 8.17.10.519, 8.17.10.514, 8.17.10.511, 8.17.10.494, 8.17.10.489, 8.17.10.483, 8.17.10.453, 8.17.10.451, 8.17.10.441, 8.17.10.436, 8.17.10.432, 8.17.10.425, 8.17.10.418, 8.17.10.414, 8.17.10.401, 8.17.10.395, 8.17.10.385, 8.17.10.378, 8.17.10.362, 8.17.10.355, 8.17.10.342, 8.17.10.331, 8.17.10.318, 8.17.10.310, 8.17.10.286, 8.17.10.269, 8.17.10.261, 8.17.10.247, 8.17.10.240, 8.15.10.212; atidxx64.dll: 8.17.10.661, 8.17.10.644; nvumdshim.dll: 10.18.13.6822");
+pref("media.wmf.disable-d3d11-for-dlls", "igd10iumd32.dll: 20.19.15.4444, 20.19.15.4424, 20.19.15.4409, 20.19.15.4390, 20.19.15.4380, 20.19.15.4360, 10.18.10.4358, 20.19.15.4331, 20.19.15.4312, 20.19.15.4300, 10.18.15.4281, 10.18.15.4279, 10.18.10.4276, 10.18.15.4268, 10.18.15.4256, 10.18.10.4252, 10.18.15.4248, 10.18.14.4112, 10.18.10.3958, 10.18.10.3496, 10.18.10.3431, 10.18.10.3412, 10.18.10.3355, 9.18.10.3234, 9.18.10.3071, 9.18.10.3055, 9.18.10.3006; igd10umd32.dll: 9.17.10.4229, 9.17.10.3040, 9.17.10.2857, 8.15.10.2274, 8.15.10.2272, 8.15.10.2246, 8.15.10.1840, 8.15.10.1808; igd10umd64.dll: 9.17.10.4229, 10.18.10.3496; isonyvideoprocessor.dll: 4.1.2247.8090, 4.1.2153.6200; tosqep.dll: 1.2.15.526, 1.1.12.201, 1.0.11.318, 1.0.11.215, 1.0.10.1224; tosqep64.dll: 1.1.12.201, 1.0.11.215; nvwgf2um.dll: 10.18.13.6510, 10.18.13.5891, 10.18.13.5887, 10.18.13.5582, 10.18.13.5382, 9.18.13.4195, 9.18.13.3165; atidxx32.dll: 21.19.151.3, 21.19.137.1, 21.19.134.1, 20.19.0.32837, 20.19.0.32832, 8.17.10.682, 8.17.10.671, 8.17.10.661, 8.17.10.648, 8.17.10.644, 8.17.10.625, 8.17.10.605, 8.17.10.581, 8.17.10.569, 8.17.10.560, 8.17.10.545, 8.17.10.539, 8.17.10.531, 8.17.10.525, 8.17.10.520, 8.17.10.519, 8.17.10.514, 8.17.10.511, 8.17.10.494, 8.17.10.489, 8.17.10.483, 8.17.10.453, 8.17.10.451, 8.17.10.441, 8.17.10.436, 8.17.10.432, 8.17.10.425, 8.17.10.418, 8.17.10.414, 8.17.10.401, 8.17.10.395, 8.17.10.385, 8.17.10.378, 8.17.10.362, 8.17.10.355, 8.17.10.342, 8.17.10.331, 8.17.10.318, 8.17.10.310, 8.17.10.286, 8.17.10.269, 8.17.10.261, 8.17.10.247, 8.17.10.240, 8.15.10.212; atidxx64.dll: 21.19.151.3, 21.19.137.1, 21.19.134.1, 20.19.0.32832, 8.17.10.682, 8.17.10.661, 8.17.10.644, 8.17.10.625; nvumdshim.dll: 10.18.13.6822");
 pref("media.wmf.disable-d3d9-for-dlls", "igdumd64.dll: 8.15.10.2189, 8.15.10.2119, 8.15.10.2104, 8.15.10.2102, 8.771.1.0; atiumd64.dll: 7.14.10.833, 7.14.10.867, 7.14.10.885, 7.14.10.903, 7.14.10.911, 8.14.10.768, 9.14.10.1001, 9.14.10.1017, 9.14.10.1080, 9.14.10.1128, 9.14.10.1162, 9.14.10.1171, 9.14.10.1183, 9.14.10.1197, 9.14.10.945, 9.14.10.972, 9.14.10.984, 9.14.10.996");
 #endif
 #if defined(MOZ_FFMPEG)
@@ -355,6 +363,7 @@ pref("media.ffmpeg.enabled", false);
 #else
 pref("media.ffmpeg.enabled", true);
 #endif
+pref("media.libavcodec.allow-obsolete", false);
 #endif
 #if defined(MOZ_FFVPX)
 pref("media.ffvpx.enabled", true);
@@ -370,9 +379,6 @@ pref("media.opus.enabled", true);
 pref("media.wave.enabled", true);
 pref("media.wave.decoder.enabled", true);
 pref("media.webm.enabled", true);
-#if defined(MOZ_FMP4) && defined(MOZ_WMF)
-pref("media.webm.intel_decoder.enabled", false);
-#endif
 
 #ifdef MOZ_APPLEMEDIA
 #ifdef MOZ_WIDGET_UIKIT
@@ -391,7 +397,7 @@ pref("media.gmp.storage.version.expected", 1);
 
 // Filter what triggers user notifications.
 // See DecoderDoctorDocumentWatcher::ReportAnalysis for details.
-pref("media.decoder-doctor.notifications-allowed", "MediaWMFNeeded,MediaWidevineNoWMFNoSilverlight,MediaCannotInitializePulseAudio,MediaCannotPlayNoDecoders,MediaNoDecoders");
+pref("media.decoder-doctor.notifications-allowed", "MediaWMFNeeded,MediaWidevineNoWMFNoSilverlight,MediaCannotInitializePulseAudio,MediaCannotPlayNoDecoders,MediaUnsupportedLibavcodec");
 // Whether we report partial failures.
 pref("media.decoder-doctor.verbose", false);
 // Whether DD should consider WMF-disabled a WMF failure, useful for testing.
@@ -560,7 +566,7 @@ pref("media.mediasource.enabled", true);
 
 pref("media.mediasource.mp4.enabled", true);
 
-#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GONK)
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GONK) || defined(MOZ_WIDGET_ANDROID)
 pref("media.mediasource.webm.enabled", false);
 #else
 pref("media.mediasource.webm.enabled", true);
@@ -582,9 +588,6 @@ pref("media.webspeech.synth.enabled", false);
 #endif
 #ifdef MOZ_WEBM_ENCODER
 pref("media.encoder.webm.enabled", true);
-#endif
-#ifdef MOZ_OMX_ENCODER
-pref("media.encoder.omx.enabled", true);
 #endif
 
 // Whether to autostart a media element with an |autoplay| attribute
@@ -771,13 +774,7 @@ pref("gfx.font_rendering.opentype_svg.enabled", true);
 // comma separated list of backends to use in order of preference
 // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
 pref("gfx.canvas.azure.backends", "direct2d1.1,skia,cairo");
-
-#ifdef NIGHTLY_BUILD
 pref("gfx.content.azure.backends", "direct2d1.1,skia,cairo");
-#else
-pref("gfx.content.azure.backends", "direct2d1.1,cairo");
-#endif
-
 #else
 #ifdef XP_MACOSX
 pref("gfx.content.azure.backends", "skia");
@@ -964,7 +961,7 @@ pref("devtools.debugger.prompt-connection", true);
 // Block tools from seeing / interacting with certified apps
 pref("devtools.debugger.forbid-certified-apps", true);
 // List of permissions that a sideloaded app can't ask for
-pref("devtools.apps.forbidden-permissions", "embed-apps,embed-widgets");
+pref("devtools.apps.forbidden-permissions", "embed-apps");
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "authored");
@@ -1113,7 +1110,10 @@ pref("print.print_edge_right", 0);
 pref("print.print_edge_bottom", 0);
 
 // Print via the parent process. This is only used when e10s is enabled.
-#if defined(XP_WIN) || defined(XP_MACOSX)
+// For Mac, limit to Nightly.
+#if defined(XP_WIN)
+pref("print.print_via_parent", true);
+#elif defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
 pref("print.print_via_parent", true);
 #else
 pref("print.print_via_parent", false);
@@ -1288,10 +1288,11 @@ pref("javascript.options.mem.gc_max_empty_chunk_count", 30);
 
 pref("javascript.options.showInConsole", false);
 
-#ifdef NIGHTLY_BUILD
-pref("javascript.options.shared_memory", true);
-#else
+#ifdef RELEASE_BUILD
+// Disabled in Beta and Release for now, see bug 1225406
 pref("javascript.options.shared_memory", false);
+#else
+pref("javascript.options.shared_memory", true);
 #endif
 
 pref("javascript.options.throw_on_debuggee_would_run", false);
@@ -1455,12 +1456,10 @@ pref("network.http.sendRefererHeader",      2);
 pref("network.http.referer.spoofSource", false);
 // 0=full URI, 1=scheme+host+port+path, 2=scheme+host+port
 pref("network.http.referer.trimmingPolicy", 0);
+// 0=full URI, 1=scheme+host+port+path, 2=scheme+host+port
+pref("network.http.referer.XOriginTrimmingPolicy", 0);
 // 0=always send, 1=send iff base domains match, 2=send iff hosts match
 pref("network.http.referer.XOriginPolicy", 0);
-
-// Controls whether we send HTTPS referres to other HTTPS sites.
-// By default this is enabled for compatibility (see bug 141641)
-pref("network.http.sendSecureXSiteReferrer", true);
 
 // Controls whether referrer attributes in <a>, <img>, <area>, <iframe>, and <link> are honoured
 pref("network.http.enablePerElementReferrer", true);
@@ -1589,21 +1588,14 @@ pref("network.http.tcp_keepalive.long_lived_idle_time", 600);
 pref("network.http.enforce-framing.http1", false); // should be named "strict"
 pref("network.http.enforce-framing.soft", true);
 
-// Whether nsHttpChannel should use the PackagedAppService to load
-// resources from a package when directed to a URL
-// such as http://domain.com/package.pak!//resource.html
-// See http://www.w3.org/TR/web-packaging/#streamable-package-format
-pref("network.http.enable-packaged-apps", false);
-
-// Enable this to bring in the signature verification if the signature exists.
-// Set to false if you don't need the signed packaged web app support (i.e. NSec).
-pref("network.http.signed-packages.enabled", false);
-
 // If it is set to false, headers with empty value will not appear in the header
 // array - behavior as it used to be. If it is true: empty headers coming from
 // the network will exist in header array as empty string. Call SetHeader with
 // an empty value will still delete the header.(Bug 6699259)
 pref("network.http.keep_empty_response_headers_as_empty_string", true);
+
+// Max size, in bytes, for received HTTP response header.
+pref("network.http.max_response_header_size", 393216);
 
 // default values for FTP
 // in a DSCP environment this should be 40 (0x28, or AF11), per RFC-4594,
@@ -2140,9 +2132,6 @@ pref("security.notification_enable_delay", 500);
 pref("security.csp.enable", true);
 pref("security.csp.experimentalEnabled", false);
 
-// Default Content Security Policy to apply to privileged apps.
-pref("security.apps.privileged.CSP.default", "default-src * data: blob:; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
-
 // Default Content Security Policy to apply to signed contents.
 pref("security.signed_content.CSP.default", "script-src 'self'; style-src 'self'");
 
@@ -2410,13 +2399,6 @@ pref("bidi.texttype", 1);
 // 5 = persiancontextnumeralBidi
 // 6 = persiannumeralBidi
 pref("bidi.numeral", 0);
-// ------------------
-//  Support Mode
-// ------------------
-// 1 = mozillaBidisupport *
-// 2 = OsBidisupport
-// 3 = disableBidisupport
-pref("bidi.support", 1);
 // Whether delete and backspace should immediately delete characters not
 // visually adjacent to the caret, or adjust the visual position of the caret
 // on the first keypress and delete the character on a second keypress
@@ -2701,6 +2683,14 @@ pref("layout.spammy_warnings.enabled", false);
 // Should we fragment floats inside CSS column layout?
 pref("layout.float-fragments-inside-column.enabled", true);
 
+// The number of frames times the frame rate is the time required to
+// pass without painting used to guess that we'll not paint again soon
+pref("layout.idle_period.required_quiescent_frames", 2);
+
+// The amount of time (milliseconds) needed between an idle period's
+// end and the start of the next tick to avoid jank.
+pref("layout.idle_period.time_limit", 3);
+
 // Is support for the Web Animations API enabled?
 // Before enabling this by default, make sure also CSSPseudoElement interface
 // has been spec'ed properly, or we should add a separate pref for
@@ -2749,6 +2739,12 @@ pref("dom.global_stop_script", true);
 
 // If true, ArchiveReader will be enabled
 pref("dom.archivereader.enabled", false);
+
+// Time (milliseconds) between throttled idle callbacks.
+pref("dom.idle_period.throttled_length", 10000);
+
+// The amount of idle time (milliseconds) reserved for a long idle period
+pref("idle_queue.long_period", 50);
 
 // Hang monitor timeout after which we kill the browser, in seconds
 // (0 is disabled)
@@ -2831,8 +2827,12 @@ pref("dom.ipc.plugins.unloadTimeoutSecs", 30);
 // Asynchronous plugin initialization is on hold.
 pref("dom.ipc.plugins.asyncInit.enabled", false);
 
-// Allow the AsyncDrawing mode to be used for plugins.
+#ifdef RELEASE_OR_BETA
+pref("dom.ipc.plugins.asyncdrawing.enabled", false);
+#else
+// Allow the AsyncDrawing mode to be used for plugins in dev channels.
 pref("dom.ipc.plugins.asyncdrawing.enabled", true);
+#endif
 
 pref("dom.ipc.processCount", 1);
 
@@ -4330,6 +4330,7 @@ pref("font.name.monospace.x-unicode", "dt-interface user-ucs2.cjk_japan-0");
 pref("signon.rememberSignons",              true);
 pref("signon.rememberSignons.visibilityToggle", true);
 pref("signon.autofillForms",                true);
+pref("signon.autofillForms.http",           true);
 pref("signon.autologin.proxy",              false);
 pref("signon.formlessCapture.enabled",      true);
 pref("signon.storeWhenAutocompleteOff",     true);
@@ -4507,7 +4508,7 @@ pref("network.tcp.keepalive.retry_interval", 1); // seconds
 #endif
 // Default maximum probe retransmissions.
 // Linux only; not configurable on Win and Mac; fixed at 10 and 8 respectively.
-#ifdef XP_UNIX && !defined(XP_MACOSX)
+#if defined(XP_UNIX) && !defined(XP_MACOSX)
 pref("network.tcp.keepalive.probe_count", 4);
 #endif
 
@@ -4623,7 +4624,8 @@ pref("gfx.direct2d.force-enabled", false);
 
 pref("layers.prefer-opengl", false);
 pref("layers.prefer-d3d9", false);
-pref("layers.allow-d3d9-fallback", true);
+// Disable for now due to bug 1304360
+pref("layers.allow-d3d9-fallback", false);
 #endif
 
 // Copy-on-write canvas
@@ -4688,6 +4690,12 @@ pref("notification.feature.enabled", false);
 // Web Notification
 pref("dom.webnotifications.enabled", true);
 pref("dom.webnotifications.serviceworker.enabled", true);
+pref("dom.webnotifications.requireinteraction.count", 3);
+#ifdef NIGHTLY_BUILD
+pref("dom.webnotifications.requireinteraction.enabled", true);
+#else
+pref("dom.webnotifications.requireinteraction.enabled", false);
+#endif
 
 // Alert animation effect, name is disableSlidingEffect for backwards-compat.
 pref("alerts.disableSlidingEffect", false);
@@ -4739,22 +4747,6 @@ pref("dom.vibrator.max_vibrate_list_len", 128);
 
 // Battery API
 pref("dom.battery.enabled", true);
-
-// WebSMS
-pref("dom.sms.enabled", false);
-// Enable Latin characters replacement with corresponding ones in GSM SMS
-// 7-bit default alphabet.
-pref("dom.sms.strict7BitEncoding", false);
-pref("dom.sms.requestStatusReport", true);
-// Numeric default service id for SMS API calls with |serviceId| parameter
-// omitted.
-pref("dom.sms.defaultServiceId", 0);
-// MobileMessage GetMessages/GetThreads read ahead aggressiveness.
-//
-// positive: finite read-ahead entries,
-// 0: don't read ahead unless explicitly requested, (default)
-// negative: read ahead all IDs if possible.
-pref("dom.sms.maxReadAheadEntries", 0);
 
 // Push
 
@@ -4905,30 +4897,6 @@ pref("social.toast-notifications.enabled", true);
 // observers (bug 780507).
 pref("dom.idle-observers-api.fuzz_time.disabled", true);
 
-// Lowest localId for apps.
-pref("dom.mozApps.maxLocalId", 1000);
-
-// Reset apps permissions
-pref("dom.apps.reset-permissions", false);
-
-// XXX Security: You CANNOT safely add a new app store for
-// installing privileged apps just by modifying this pref and
-// adding the signing cert for that store to the cert trust
-// database. *Any* origin listed can install apps signed with
-// *any* certificate trusted; we don't try to maintain a strong
-// association between certificate with installOrign. The
-// expectation here is that in production builds the pref will
-// contain exactly one origin. However, in custom development
-// builds it may contain more than one origin so we can test
-// different stages (dev, staging, prod) of the same app store.
-pref("dom.mozApps.signed_apps_installable_from", "https://marketplace.firefox.com");
-
-// Whether or not to dump mozApps debug messages to the console.
-// Only checked on startup, so restart after changing this pref.
-// Ignored on Android, where we always report debug messages because it's
-// unnecessary to restrict reporting, per bug 1003469.
-pref("dom.mozApps.debug", false);
-
 // Minimum delay in milliseconds between network activity notifications (0 means
 // no notifications). The delay is the same for both download and upload, though
 // they are handled separately. This pref is only read once at startup:
@@ -5047,16 +5015,6 @@ pref("dom.mozInputMethod.enabled", false);
 
 pref("dom.flyweb.enabled", false);
 
-// Telephony API
-#ifdef MOZ_B2G_RIL
-pref("dom.telephony.enabled", true);
-#else
-pref("dom.telephony.enabled", false);
-#endif
-// Numeric default service id for WebTelephony API calls with |serviceId|
-// parameter omitted.
-pref("dom.telephony.defaultServiceId", 0);
-
 // ICC API
 #ifdef MOZ_B2G_RIL
 pref("dom.icc.enabled", true);
@@ -5070,16 +5028,6 @@ pref("dom.mobileconnection.enabled", true);
 #else
 pref("dom.mobileconnection.enabled", false);
 #endif
-
-// Voice Mail API
-#ifdef MOZ_B2G_RIL
-pref("dom.voicemail.enabled", true);
-#else
-pref("dom.voicemail.enabled", false);
-#endif
-// Numeric default service id for Voice Mail API calls with |serviceId|
-// parameter omitted.
-pref("dom.voicemail.defaultServiceId", 0);
 
 // Enable mapped array buffer by default.
 pref("dom.mapped_arraybuffer.enabled", true);
@@ -5443,7 +5391,9 @@ pref("narrate.enabled", false);
 
 pref("narrate.test", false);
 pref("narrate.rate", 0);
-pref("narrate.voice", "automatic");
+pref("narrate.voice", " { \"default\": \"automatic\" }");
+// Only make voices that match content language available.
+pref("narrate.filter-voices", true);
 
 #if defined(XP_LINUX) && defined(MOZ_GMP_SANDBOX)
 // Whether to allow, on a Linux system that doesn't support the necessary sandboxing
@@ -5560,4 +5510,11 @@ pref("security.mixed_content.use_hsts", false);
 // Change the order of evaluation so HSTS upgrades happen before
 // mixed-content blocking
 pref("security.mixed_content.use_hsts", true);
+#endif
+
+// Disable Storage api in release builds.
+#ifdef NIGHTLY_BUILD
+pref("dom.storageManager.enabled", true);
+#else
+pref("dom.storageManager.enabled", false);
 #endif

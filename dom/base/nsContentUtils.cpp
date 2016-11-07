@@ -38,7 +38,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/dom/ContentChild.h"
-#include "mozilla/dom/CustomElementsRegistry.h"
+#include "mozilla/dom/CustomElementRegistry.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/DOMTypes.h"
 #include "mozilla/dom/Element.h"
@@ -67,6 +67,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/TextEvents.h"
+#include "nsArrayUtils.h"
 #include "nsAString.h"
 #include "nsAttrName.h"
 #include "nsAttrValue.h"
@@ -113,6 +114,7 @@
 #include "nsIContentSink.h"
 #include "nsIContentViewer.h"
 #include "nsIDocShell.h"
+#include "nsIDocShellTreeOwner.h"
 #include "nsIDocument.h"
 #include "nsIDocumentEncoder.h"
 #include "nsIDOMChromeWindow.h"
@@ -208,6 +210,8 @@
 #include "mozilla/EnumSet.h"
 #include "mozilla/BloomFilter.h"
 #include "TabChild.h"
+#include "mozilla/dom/DocGroup.h"
+#include "mozilla/dom/TabGroup.h"
 
 #include "nsIBidiKeyboard.h"
 
@@ -6247,32 +6251,6 @@ nsContentUtils::CreateArrayBuffer(JSContext *aCx, const nsACString& aData,
   return NS_OK;
 }
 
-// Initial implementation: only stores to RAM, not file
-// TODO: bug 704447: large file support
-nsresult
-nsContentUtils::CreateBlobBuffer(JSContext* aCx,
-                                 nsISupports* aParent,
-                                 const nsACString& aData,
-                                 JS::MutableHandle<JS::Value> aBlob)
-{
-  uint32_t blobLen = aData.Length();
-  void* blobData = malloc(blobLen);
-  RefPtr<Blob> blob;
-  if (blobData) {
-    memcpy(blobData, aData.BeginReading(), blobLen);
-    blob = mozilla::dom::Blob::CreateMemoryBlob(aParent, blobData, blobLen,
-                                                EmptyString());
-  } else {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  if (!ToJSValue(aCx, blob, aBlob)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  return NS_OK;
-}
-
 void
 nsContentUtils::StripNullChars(const nsAString& aInStr, nsAString& aOutStr)
 {
@@ -7543,7 +7521,7 @@ nsContentUtils::IPCTransferableToTransferable(const IPCDataTransfer& aDataTransf
 }
 
 void
-nsContentUtils::TransferablesToIPCTransferables(nsISupportsArray* aTransferables,
+nsContentUtils::TransferablesToIPCTransferables(nsIArray* aTransferables,
                                                 nsTArray<IPCDataTransfer>& aIPC,
                                                 bool aInSyncMessage,
                                                 mozilla::dom::nsIContentChild* aChild,
@@ -7552,12 +7530,10 @@ nsContentUtils::TransferablesToIPCTransferables(nsISupportsArray* aTransferables
   aIPC.Clear();
   if (aTransferables) {
     uint32_t transferableCount = 0;
-    aTransferables->Count(&transferableCount);
+    aTransferables->GetLength(&transferableCount);
     for (uint32_t i = 0; i < transferableCount; ++i) {
       IPCDataTransfer* dt = aIPC.AppendElement();
-      nsCOMPtr<nsISupports> genericItem;
-      aTransferables->GetElementAt(i, getter_AddRefs(genericItem));
-      nsCOMPtr<nsITransferable> transferable(do_QueryInterface(genericItem));
+      nsCOMPtr<nsITransferable> transferable = do_QueryElementAt(aTransferables, i);
       TransferableToIPCTransferable(transferable, dt, aInSyncMessage, aChild, aParent);
     }
   }
@@ -7693,11 +7669,11 @@ nsContentUtils::TransferableToIPCTransferable(nsITransferable* aTransferable,
   MOZ_ASSERT((aChild && !aParent) || (!aChild && aParent));
 
   if (aTransferable) {
-    nsCOMPtr<nsISupportsArray> flavorList;
+    nsCOMPtr<nsIArray> flavorList;
     aTransferable->FlavorsTransferableCanExport(getter_AddRefs(flavorList));
     if (flavorList) {
       uint32_t flavorCount = 0;
-      flavorList->Count(&flavorCount);
+      flavorList->GetLength(&flavorCount);
       for (uint32_t j = 0; j < flavorCount; ++j) {
         nsCOMPtr<nsISupportsCString> flavor = do_QueryElementAt(flavorList, j);
         if (!flavor) {
@@ -8418,6 +8394,7 @@ nsContentUtils::InternalContentPolicyTypeToExternal(nsContentPolicyType aType)
 
   case nsIContentPolicy::TYPE_INTERNAL_IMAGE:
   case nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD:
+  case nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON:
     return nsIContentPolicy::TYPE_IMAGE;
 
   case nsIContentPolicy::TYPE_INTERNAL_STYLESHEET:
@@ -9367,6 +9344,31 @@ nsContentUtils::GetPresentationURL(nsIDocShell* aDocShell, nsAString& aPresentat
 {
   MOZ_ASSERT(aDocShell);
 
+  // Simulate receiver context for web platform test
+  if (Preferences::GetBool("dom.presentation.testing.simulate-receiver")) {
+    nsCOMPtr<nsIDocument> doc;
+
+    nsCOMPtr<nsPIDOMWindowOuter> docShellWin =
+      do_QueryInterface(aDocShell->GetScriptGlobalObject());
+    if (docShellWin) {
+      doc = docShellWin->GetExtantDoc();
+    }
+
+    if (NS_WARN_IF(!doc)) {
+      return;
+    }
+
+    nsCOMPtr<nsIURI> uri = doc->GetDocumentURI();
+    if (NS_WARN_IF(!uri)) {
+      return;
+    }
+
+    nsAutoCString uriStr;
+    uri->GetSpec(uriStr);
+    aPresentationUrl = NS_ConvertUTF8toUTF16(uriStr);
+    return;
+  }
+
   if (XRE_IsContentProcess()) {
     nsCOMPtr<nsIDocShellTreeItem> sameTypeRoot;
     aDocShell->GetSameTypeRootTreeItem(getter_AddRefs(sameTypeRoot));
@@ -9536,7 +9538,7 @@ nsContentUtils::LookupCustomElementDefinition(nsIDocument* aDoc,
     return nullptr;
   }
 
-  RefPtr<CustomElementsRegistry> registry(window->CustomElements());
+  RefPtr<CustomElementRegistry> registry(window->CustomElements());
   if (!registry) {
     return nullptr;
   }
@@ -9569,7 +9571,7 @@ nsContentUtils::SetupCustomElement(Element* aElement,
     return;
   }
 
-  RefPtr<CustomElementsRegistry> registry(window->CustomElements());
+  RefPtr<CustomElementRegistry> registry(window->CustomElements());
   if (!registry) {
     return;
   }
@@ -9598,7 +9600,7 @@ nsContentUtils::EnqueueLifecycleCallback(nsIDocument* aDoc,
     return;
   }
 
-  RefPtr<CustomElementsRegistry> registry(window->CustomElements());
+  RefPtr<CustomElementRegistry> registry(window->CustomElements());
   if (!registry) {
     return;
   }
@@ -9627,10 +9629,147 @@ nsContentUtils::GetCustomPrototype(nsIDocument* aDoc,
     return;
   }
 
-  RefPtr<CustomElementsRegistry> registry(window->CustomElements());
+  RefPtr<CustomElementRegistry> registry(window->CustomElements());
   if (!registry) {
     return;
   }
 
   return registry->GetCustomPrototype(aAtom, aPrototype);
+}
+
+/* static */ bool
+nsContentUtils::AttemptLargeAllocationLoad(nsIHttpChannel* aChannel)
+{
+  MOZ_ASSERT(aChannel);
+
+  nsCOMPtr<nsILoadGroup> loadGroup;
+  nsresult rv = aChannel->GetLoadGroup(getter_AddRefs(loadGroup));
+  if (NS_WARN_IF(NS_FAILED(rv) || !loadGroup)) {
+    return false;
+  }
+
+  nsCOMPtr<nsIInterfaceRequestor> callbacks;
+  rv = loadGroup->GetNotificationCallbacks(getter_AddRefs(callbacks));
+  if (NS_WARN_IF(NS_FAILED(rv) || !callbacks)) {
+    return false;
+  }
+
+  nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(callbacks);
+  if (NS_WARN_IF(!loadContext)) {
+    return false;
+  }
+
+  nsCOMPtr<mozIDOMWindowProxy> window;
+  rv = loadContext->GetAssociatedWindow(getter_AddRefs(window));
+  if (NS_WARN_IF(NS_FAILED(rv) || !window)) {
+    return false;
+  }
+
+  nsPIDOMWindowOuter* outer = nsPIDOMWindowOuter::From(window);
+  if (NS_WARN_IF(!outer)) {
+    return false;
+  }
+
+  nsIDocument* doc = outer->GetExtantDoc();
+
+  // If we aren't in the content process, we cannot perform a cross-process
+  // load, so abort right away
+  if (NS_WARN_IF(!XRE_IsContentProcess())) {
+    if (doc) {
+      nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                      NS_LITERAL_CSTRING("DOM"),
+                                      doc,
+                                      nsContentUtils::eDOM_PROPERTIES,
+                                      "LargeAllocationNonE10S");
+    }
+    return false;
+  }
+
+  // Check if we are a toplevel window
+  if (NS_WARN_IF(outer->GetScriptableParentOrNull())) {
+    if (doc) {
+      nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                      NS_LITERAL_CSTRING("DOM"),
+                                      doc,
+                                      nsContentUtils::eDOM_PROPERTIES,
+                                      "LargeAllocationInIFrame");
+    }
+    return false;
+  }
+
+  // If we have any other toplevel windows in our tab group, then we cannot
+  // perform the navigation.
+  TabGroup* tabGroup = nsGlobalWindow::Cast(outer)->TabGroup();
+  nsTArray<nsPIDOMWindowOuter*> toplevelWindows = tabGroup->GetTopLevelWindows();
+  if (NS_WARN_IF(toplevelWindows.Length() > 1)) {
+    if (doc) {
+      nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                      NS_LITERAL_CSTRING("DOM"),
+                                      doc,
+                                      nsContentUtils::eDOM_PROPERTIES,
+                                      "LargeAllocationRelatedBrowsingContexts");
+    }
+    return false;
+  }
+  MOZ_ASSERT(toplevelWindows.Length() == 1);
+  MOZ_ASSERT(toplevelWindows[0] == outer);
+
+  // Get the request method, and check if it is a GET request. If it is not GET,
+  // then we cannot perform a large allocation load.
+  nsAutoCString requestMethod;
+  rv = aChannel->GetRequestMethod(requestMethod);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  if (NS_WARN_IF(!requestMethod.LowerCaseEqualsLiteral("get"))) {
+    if (doc) {
+      nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                      NS_LITERAL_CSTRING("DOM"),
+                                      doc,
+                                      nsContentUtils::eDOM_PROPERTIES,
+                                      "LargeAllocationNonGetRequest");
+    }
+    return false;
+  }
+
+  TabChild* tabChild = TabChild::GetFrom(outer);
+  NS_ENSURE_TRUE(tabChild, false);
+
+  if (tabChild->TakeIsFreshProcess())  {
+    NS_WARNING("Already in a fresh process, ignoring Large-Allocation header!");
+    if (doc) {
+      nsContentUtils::ReportToConsole(nsIScriptError::infoFlag,
+                                      NS_LITERAL_CSTRING("DOM"),
+                                      doc,
+                                      nsContentUtils::eDOM_PROPERTIES,
+                                      "LargeAllocationSuccess");
+    }
+    return false;
+  }
+
+  // At this point the fress process load should succeed! We just need to get
+  // ourselves a nsIWebBrowserChrome3 to ask to perform the reload. We should
+  // have one, as we have already confirmed that we are running in a content
+  // process.
+  nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
+  outer->GetDocShell()->GetTreeOwner(getter_AddRefs(treeOwner));
+  NS_ENSURE_TRUE(treeOwner, false);
+
+  nsCOMPtr<nsIWebBrowserChrome3> wbc3 = do_GetInterface(treeOwner);
+  NS_ENSURE_TRUE(wbc3, false);
+
+  nsCOMPtr<nsIURI> uri;
+  rv = aChannel->GetURI(getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, false);
+  NS_ENSURE_TRUE(uri, false);
+
+  nsCOMPtr<nsIURI> referrer;
+  rv = aChannel->GetReferrer(getter_AddRefs(referrer));
+  NS_ENSURE_SUCCESS(rv, false);
+
+  // Actually perform the cross process load
+  bool reloadSucceeded = false;
+  rv = wbc3->ReloadInFreshProcess(outer->GetDocShell(), uri, referrer, &reloadSucceeded);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  return reloadSucceeded;
 }

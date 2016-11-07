@@ -3,7 +3,7 @@ import sys
 
 # OS Specifics
 ABS_WORK_DIR = os.path.join(os.getcwd(), "build")
-BINARY_PATH = os.path.join(ABS_WORK_DIR, "firefox", "firefox.exe")
+BINARY_PATH = os.path.join(ABS_WORK_DIR, "application", "firefox", "firefox.exe")
 INSTALLER_PATH = os.path.join(ABS_WORK_DIR, "installer.zip")
 XPCSHELL_NAME = 'xpcshell.exe'
 EXE_SUFFIX = '.exe'
@@ -274,7 +274,14 @@ config = {
     "default_blob_upload_servers": [
         "https://blobupload.elasticbeanstalk.com",
     ],
-    "structured_suites": ["reftest"],
+    "unstructured_flavors": {"mochitest": ['jetpack'],
+                            "xpcshell": [],
+                            "gtest": [],
+                            "mozmill": [],
+                            "cppunittest": [],
+                            "jittest": [],
+                            "mozbase": [],
+                            },
     "blob_uploader_auth_file": os.path.join(os.getcwd(), "oauth.txt"),
     "download_minidump_stackwalk": True,
     "minidump_stackwalk_path": "win32-minidump_stackwalk.exe",

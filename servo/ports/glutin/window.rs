@@ -13,14 +13,13 @@ use euclid::scale_factor::ScaleFactor;
 use euclid::size::TypedSize2D;
 #[cfg(target_os = "windows")]
 use gdi32;
+use gfx_traits::DevicePixel;
 use gleam::gl;
 use glutin;
 use glutin::{Api, ElementState, Event, GlRequest, MouseButton, MouseScrollDelta, VirtualKeyCode};
 use glutin::{ScanCode, TouchPhase};
 #[cfg(target_os = "macos")]
 use glutin::os::macos::{ActivationPolicy, WindowBuilderExt};
-use layers::geometry::DevicePixel;
-use layers::platform::surface::NativeDisplay;
 use msg::constellation_msg::{self, Key};
 use msg::constellation_msg::{ALT, CONTROL, KeyState, NONE, SHIFT, SUPER};
 use net_traits::net_error_list::NetError;
@@ -32,7 +31,6 @@ use std::cell::{Cell, RefCell};
 use std::ffi::CString;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::mem;
-#[cfg(not(target_os = "android"))]
 use std::os::raw::c_void;
 use std::ptr;
 use std::rc::Rc;
@@ -43,14 +41,12 @@ use url::Url;
 use user32;
 use util::geometry::ScreenPx;
 use util::opts;
-#[cfg(not(target_os = "android"))]
-use util::opts::RenderApi;
 use util::prefs::PREFS;
 use util::resource_files;
 #[cfg(target_os = "windows")]
 use winapi;
 
-static mut g_nested_event_loop_listener: Option<*mut (NestedEventLoopListener + 'static)> = None;
+static mut G_NESTED_EVENT_LOOP_LISTENER: Option<*mut (NestedEventLoopListener + 'static)> = None;
 
 bitflags! {
     flags KeyModifiers: u8 {
@@ -307,7 +303,7 @@ impl Window {
 
     fn nested_window_resize(width: u32, height: u32) {
         unsafe {
-            match g_nested_event_loop_listener {
+            match G_NESTED_EVENT_LOOP_LISTENER {
                 None => {}
                 Some(listener) => {
                     (*listener).handle_event_from_nested_event_loop(
@@ -319,17 +315,7 @@ impl Window {
 
     #[cfg(not(any(target_arch = "arm", target_arch = "aarch64")))]
     fn gl_version() -> GlRequest {
-        if opts::get().use_webrender {
-            return GlRequest::Specific(Api::OpenGl, (3, 2));
-        }
-        match opts::get().render_api {
-            RenderApi::GL => {
-                GlRequest::Specific(Api::OpenGl, (2, 1))
-            }
-            RenderApi::ES2 => {
-                GlRequest::Specific(Api::OpenGlEs, (2, 0))
-            }
-        }
+        return GlRequest::Specific(Api::OpenGl, (3, 2));
     }
 
     #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
@@ -536,7 +522,7 @@ impl Window {
                 let event = match window.wait_events().next() {
                     None => {
                         warn!("Window event stream closed.");
-                        return false;
+                        return true;
                     },
                     Some(event) => event,
                 };
@@ -559,72 +545,28 @@ impl Window {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn handle_next_event(&self) -> bool {
-        use std::thread;
-        use std::time::Duration;
-
-        // WebRender can use the normal blocking event check and proper vsync,
-        // because it doesn't call X11 functions from another thread, so doesn't
-        // hit the same issues explained below.
-        if opts::get().use_webrender {
-            match self.kind {
-                WindowKind::Window(ref window) => {
-                    let event = match window.wait_events().next() {
-                        None => {
-                            warn!("Window event stream closed.");
-                            return false;
-                        },
-                        Some(event) => event,
-                    };
-                    let mut close = self.handle_window_event(event);
-                    if !close {
-                        while let Some(event) = window.poll_events().next() {
-                            if self.handle_window_event(event) {
-                                close = true;
-                                break
-                            }
+        match self.kind {
+            WindowKind::Window(ref window) => {
+                let event = match window.wait_events().next() {
+                    None => {
+                        warn!("Window event stream closed.");
+                        return true;
+                    },
+                    Some(event) => event,
+                };
+                let mut close = self.handle_window_event(event);
+                if !close {
+                    while let Some(event) = window.poll_events().next() {
+                        if self.handle_window_event(event) {
+                            close = true;
+                            break
                         }
                     }
-                    close
                 }
-                WindowKind::Headless(..) => {
-                    false
-                }
+                close
             }
-        } else {
-            // TODO(gw): This is an awful hack to work around the
-            // broken way we currently call X11 from multiple threads.
-            //
-            // On some (most?) X11 implementations, blocking here
-            // with XPeekEvent results in the paint thread getting stuck
-            // in XGetGeometry randomly. When this happens the result
-            // is that until you trigger the XPeekEvent to return
-            // (by moving the mouse over the window) the paint thread
-            // never completes and you don't see the most recent
-            // results.
-            //
-            // For now, poll events and sleep for ~1 frame if there
-            // are no events. This means we don't spin the CPU at
-            // 100% usage, but is far from ideal!
-            //
-            // See https://github.com/servo/servo/issues/5780
-            //
-            match self.kind {
-                WindowKind::Window(ref window) => {
-                    let first_event = window.poll_events().next();
-
-                    match first_event {
-                        Some(event) => {
-                            self.handle_window_event(event)
-                        }
-                        None => {
-                            thread::sleep(Duration::from_millis(16));
-                            false
-                        }
-                    }
-                }
-                WindowKind::Headless(..) => {
-                    false
-                }
+            WindowKind::Headless(..) => {
+                false
             }
         }
     }
@@ -662,11 +604,11 @@ impl Window {
     pub unsafe fn set_nested_event_loop_listener(
             &self,
             listener: *mut (NestedEventLoopListener + 'static)) {
-        g_nested_event_loop_listener = Some(listener)
+        G_NESTED_EVENT_LOOP_LISTENER = Some(listener)
     }
 
     pub unsafe fn remove_nested_event_loop_listener(&self) {
-        g_nested_event_loop_listener = None
+        G_NESTED_EVENT_LOOP_LISTENER = None
     }
 
     fn glutin_key_to_script_key(key: glutin::VirtualKeyCode) -> Result<constellation_msg::Key, ()> {
@@ -1030,33 +972,6 @@ impl WindowMethods for Window {
 
     fn prepare_for_composite(&self, _width: usize, _height: usize) -> bool {
         true
-    }
-
-    #[cfg(target_os = "linux")]
-    fn native_display(&self) -> NativeDisplay {
-        use x11::xlib;
-        unsafe {
-            match opts::get().render_api {
-                RenderApi::GL => {
-                    match self.kind {
-                        WindowKind::Window(ref window) => {
-                            NativeDisplay::new(window.platform_display() as *mut xlib::Display)
-                        }
-                        WindowKind::Headless(..) => {
-                            unreachable!()
-                        }
-                    }
-                },
-                RenderApi::ES2 => {
-                    NativeDisplay::new_egl_display()
-                }
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn native_display(&self) -> NativeDisplay {
-        NativeDisplay::new()
     }
 
     /// Helper function to handle keyboard events.

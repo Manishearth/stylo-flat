@@ -1014,7 +1014,7 @@ nsXULAppInfo::GetLastRunCrashID(nsAString &aLastRunCrashID)
 }
 
 NS_IMETHODIMP
-nsXULAppInfo::GetIsReleaseBuild(bool* aResult)
+nsXULAppInfo::GetIsReleaseOrBeta(bool* aResult)
 {
 #ifdef RELEASE_OR_BETA
   *aResult = true;
@@ -1604,7 +1604,8 @@ DumpHelp()
          "  --profile <path>   Start with profile at <path>.\n"
          "  --migration        Start with migration wizard.\n"
          "  --ProfileManager   Start with ProfileManager.\n"
-         "  --no-remote        Do not accept or send remote commands; implies --new-instance.\n"
+         "  --no-remote        Do not accept or send remote commands; implies\n"
+         "                     --new-instance.\n"
          "  --new-instance     Open new instance, not a new window in running instance.\n"
          "  --UILocale <locale> Start with <locale> resources as UI Locale.\n"
          "  --safe-mode        Disables extensions and themes for this session.\n", gAppData->name);
@@ -4434,9 +4435,25 @@ XREMain::XRE_mainRun()
 #if defined(MOZ_SANDBOX) && defined(XP_LINUX) && !defined(MOZ_WIDGET_GONK)
   // If we're on Linux, we now have information about the OS capabilities
   // available to us.
-  SandboxInfo::SubmitTelemetry();
+  SandboxInfo sandboxInfo = SandboxInfo::Get();
+  Telemetry::Accumulate(Telemetry::SANDBOX_HAS_SECCOMP_BPF,
+                        sandboxInfo.Test(SandboxInfo::kHasSeccompBPF));
+  Telemetry::Accumulate(Telemetry::SANDBOX_HAS_SECCOMP_TSYNC,
+                        sandboxInfo.Test(SandboxInfo::kHasSeccompTSync));
+  Telemetry::Accumulate(Telemetry::SANDBOX_HAS_USER_NAMESPACES_PRIVILEGED,
+                        sandboxInfo.Test(SandboxInfo::kHasPrivilegedUserNamespaces));
+  Telemetry::Accumulate(Telemetry::SANDBOX_HAS_USER_NAMESPACES,
+                        sandboxInfo.Test(SandboxInfo::kHasUserNamespaces));
+  Telemetry::Accumulate(Telemetry::SANDBOX_CONTENT_ENABLED,
+                        sandboxInfo.Test(SandboxInfo::kEnabledForContent));
+  Telemetry::Accumulate(Telemetry::SANDBOX_MEDIA_ENABLED,
+                        sandboxInfo.Test(SandboxInfo::kEnabledForMedia));
 #if defined(MOZ_CRASHREPORTER)
-  SandboxInfo::Get().AnnotateCrashReport();
+  nsAutoCString flagsString;
+  flagsString.AppendInt(sandboxInfo.AsInteger());
+
+  CrashReporter::AnnotateCrashReport(
+    NS_LITERAL_CSTRING("ContentSandboxCapabilities"), flagsString);
 #endif /* MOZ_CRASHREPORTER */
 #endif /* MOZ_SANDBOX && XP_LINUX && !MOZ_WIDGET_GONK */
 
@@ -4793,7 +4810,7 @@ enum {
   // kE10sDisabledInSafeMode = 3, was removed in bug 1172491.
   kE10sDisabledForAccessibility = 4,
   // kE10sDisabledForMacGfx = 5, was removed in bug 1068674.
-  kE10sDisabledForBidi = 6,
+  // kE10sDisabledForBidi = 6, removed in bug 1309599
   kE10sDisabledForAddons = 7,
   kE10sForceDisabled = 8,
   // kE10sDisabledForXPAcceleration = 9, removed in bug 1296353
@@ -4867,11 +4884,14 @@ MultiprocessBlockPolicy() {
     }
   }
 
-  // For linux nightly and aurora builds skip accessibility
-  // checks.
   bool doAccessibilityCheck = true;
 #if defined(MOZ_WIDGET_GTK) && !defined(RELEASE_OR_BETA)
+  // For linux nightly and aurora builds skip accessibility
+  // checks.
   doAccessibilityCheck = false;
+#elif defined(XP_WIN)
+  // For Windows Vista and up, skip accessibility checks.
+  doAccessibilityCheck = !IsVistaOrLater();
 #endif
 
   if (doAccessibilityCheck && disabledForA11y) {
@@ -4889,25 +4909,6 @@ MultiprocessBlockPolicy() {
     return gMultiprocessBlockPolicy;
   }
 #endif // XP_WIN
-
-#if defined(MOZ_WIDGET_GTK)
-  /**
-   * Avoids enabling e10s for certain locales that require bidi selection,
-   * which currently doesn't work well with e10s.
-   */
-  bool disabledForBidi = false;
-
-  nsCOMPtr<nsIXULChromeRegistry> registry =
-   mozilla::services::GetXULChromeRegistryService();
-  if (registry) {
-     registry->IsLocaleRTL(NS_LITERAL_CSTRING("global"), &disabledForBidi);
-  }
-
-  if (disabledForBidi) {
-    gMultiprocessBlockPolicy = kE10sDisabledForBidi;
-    return gMultiprocessBlockPolicy;
-  }
-#endif // MOZ_WIDGET_GTK
 
   /*
    * None of the blocking policies matched, so e10s is allowed to run.

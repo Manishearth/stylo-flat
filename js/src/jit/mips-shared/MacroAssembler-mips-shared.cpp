@@ -234,8 +234,8 @@ template void
 MacroAssemblerMIPSShared::ma_addTestCarry<Label*>(Register rd, Register rs,
                                                   Register rt, Label* overflow);
 template void
-MacroAssemblerMIPSShared::ma_addTestCarry<wasm::JumpTarget>(Register rd, Register rs, Register rt,
-                                                            wasm::JumpTarget overflow);
+MacroAssemblerMIPSShared::ma_addTestCarry<wasm::TrapDesc>(Register rd, Register rs, Register rt,
+                                                          wasm::TrapDesc overflow);
 
 template <typename L>
 void
@@ -249,8 +249,8 @@ template void
 MacroAssemblerMIPSShared::ma_addTestCarry<Label*>(Register rd, Register rs,
                                                   Imm32 imm, Label* overflow);
 template void
-MacroAssemblerMIPSShared::ma_addTestCarry<wasm::JumpTarget>(Register rd, Register rs, Imm32 imm,
-                                                            wasm::JumpTarget overflow);
+MacroAssemblerMIPSShared::ma_addTestCarry<wasm::TrapDesc>(Register rd, Register rs, Imm32 imm,
+                                                          wasm::TrapDesc overflow);
 
 // Subtract.
 void
@@ -684,7 +684,7 @@ MacroAssemblerMIPSShared::ma_b(Register lhs, ImmPtr imm, Label* l, Condition c, 
 
 template <typename T>
 void
-MacroAssemblerMIPSShared::ma_b(Register lhs, T rhs, wasm::JumpTarget target, Condition c,
+MacroAssemblerMIPSShared::ma_b(Register lhs, T rhs, wasm::TrapDesc target, Condition c,
                                JumpKind jumpKind)
 {
     Label label;
@@ -693,13 +693,13 @@ MacroAssemblerMIPSShared::ma_b(Register lhs, T rhs, wasm::JumpTarget target, Con
 }
 
 template void MacroAssemblerMIPSShared::ma_b<Register>(Register lhs, Register rhs,
-                                                       wasm::JumpTarget target, Condition c,
+                                                       wasm::TrapDesc target, Condition c,
                                                        JumpKind jumpKind);
 template void MacroAssemblerMIPSShared::ma_b<Imm32>(Register lhs, Imm32 rhs,
-                                                       wasm::JumpTarget target, Condition c,
+                                                       wasm::TrapDesc target, Condition c,
                                                        JumpKind jumpKind);
 template void MacroAssemblerMIPSShared::ma_b<ImmTag>(Register lhs, ImmTag rhs,
-                                                       wasm::JumpTarget target, Condition c,
+                                                       wasm::TrapDesc target, Condition c,
                                                        JumpKind jumpKind);
 
 void
@@ -709,7 +709,7 @@ MacroAssemblerMIPSShared::ma_b(Label* label, JumpKind jumpKind)
 }
 
 void
-MacroAssemblerMIPSShared::ma_b(wasm::JumpTarget target, JumpKind jumpKind)
+MacroAssemblerMIPSShared::ma_b(wasm::TrapDesc target, JumpKind jumpKind)
 {
     Label label;
     asMasm().branchWithCode(getBranchCode(BranchIsJump), &label, jumpKind);
@@ -1584,9 +1584,10 @@ MacroAssembler::patchCall(uint32_t callerOffset, uint32_t calleeOffset)
 {
     BufferOffset call(callerOffset - 7 * sizeof(uint32_t));
 
-    if (BOffImm16::IsInRange(BufferOffset(calleeOffset).diffB<int>(call))) {
+    BOffImm16 offset = BufferOffset(calleeOffset).diffB<BOffImm16>(call);
+    if (!offset.isInvalid()) {
         InstImm* bal = (InstImm*)editSrc(call);
-        bal->setBOffImm16(BufferOffset(calleeOffset).diffB<BOffImm16>(call));
+        bal->setBOffImm16(offset);
     } else {
         uint32_t u32Offset = callerOffset - 5 * sizeof(uint32_t);
         uint32_t* u32 = reinterpret_cast<uint32_t*>(editSrc(BufferOffset(u32Offset)));
@@ -1595,33 +1596,33 @@ MacroAssembler::patchCall(uint32_t callerOffset, uint32_t calleeOffset)
 }
 
 CodeOffset
-MacroAssembler::thunkWithPatch()
+MacroAssembler::farJumpWithPatch()
 {
     ma_move(SecondScratchReg, ra);
     as_bal(BOffImm16(3 * sizeof(uint32_t)));
     as_lw(ScratchRegister, ra, 0);
-    // Allocate space which will be patched by patchThunk().
-    CodeOffset u32Offset(currentOffset());
+    // Allocate space which will be patched by patchFarJump().
+    CodeOffset farJump(currentOffset());
     writeInst(UINT32_MAX);
     addPtr(ra, ScratchRegister);
     as_jr(ScratchRegister);
     ma_move(ra, SecondScratchReg);
-    return u32Offset;
+    return farJump;
 }
 
 void
-MacroAssembler::patchThunk(uint32_t u32Offset, uint32_t targetOffset)
+MacroAssembler::patchFarJump(CodeOffset farJump, uint32_t targetOffset)
 {
-    uint32_t* u32 = reinterpret_cast<uint32_t*>(editSrc(BufferOffset(u32Offset)));
+    uint32_t* u32 = reinterpret_cast<uint32_t*>(editSrc(BufferOffset(farJump.offset())));
     MOZ_ASSERT(*u32 == UINT32_MAX);
-    *u32 = targetOffset - u32Offset;
+    *u32 = targetOffset - farJump.offset();
 }
 
 void
-MacroAssembler::repatchThunk(uint8_t* code, uint32_t u32Offset, uint32_t targetOffset)
+MacroAssembler::repatchFarJump(uint8_t* code, uint32_t farJumpOffset, uint32_t targetOffset)
 {
-    uint32_t* u32 = reinterpret_cast<uint32_t*>(code + u32Offset);
-    *u32 = targetOffset - u32Offset;
+    uint32_t* u32 = reinterpret_cast<uint32_t*>(code + farJumpOffset);
+    *u32 = targetOffset - farJumpOffset;
 }
 
 CodeOffset

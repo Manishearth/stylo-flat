@@ -952,6 +952,7 @@ pub trait LayoutNodeHelpers {
 
     unsafe fn get_style_and_layout_data(&self) -> Option<OpaqueStyleAndLayoutData>;
     unsafe fn init_style_and_layout_data(&self, OpaqueStyleAndLayoutData);
+    unsafe fn take_style_and_layout_data(&self) -> OpaqueStyleAndLayoutData;
 
     fn text_content(&self) -> String;
     fn selection(&self) -> Option<Range<usize>>;
@@ -1049,6 +1050,14 @@ impl LayoutNodeHelpers for LayoutJS<Node> {
     unsafe fn init_style_and_layout_data(&self, val: OpaqueStyleAndLayoutData) {
         debug_assert!((*self.unsafe_get()).style_and_layout_data.get().is_none());
         (*self.unsafe_get()).style_and_layout_data.set(Some(val));
+    }
+
+    #[inline]
+    #[allow(unsafe_code)]
+    unsafe fn take_style_and_layout_data(&self) -> OpaqueStyleAndLayoutData {
+        let val = (*self.unsafe_get()).style_and_layout_data.get().unwrap();
+        (*self.unsafe_get()).style_and_layout_data.set(None);
+        val
     }
 
     #[allow(unsafe_code)]
@@ -1935,8 +1944,8 @@ impl NodeMethods for Node {
         }
     }
 
-    // https://dom.spec.whatwg.org/#dom-node-rootnode
-    fn RootNode(&self) -> Root<Node> {
+    // https://dom.spec.whatwg.org/#dom-node-getrootnode
+    fn GetRootNode(&self) -> Root<Node> {
         self.inclusive_ancestors().last().unwrap()
     }
 
@@ -2654,20 +2663,11 @@ impl Into<LayoutNodeType> for NodeTypeId {
     #[inline(always)]
     fn into(self) -> LayoutNodeType {
         match self {
-            NodeTypeId::CharacterData(CharacterDataTypeId::Comment) =>
-                LayoutNodeType::Comment,
-            NodeTypeId::Document(..) =>
-                LayoutNodeType::Document,
-            NodeTypeId::DocumentFragment =>
-                LayoutNodeType::DocumentFragment,
-            NodeTypeId::DocumentType =>
-                LayoutNodeType::DocumentType,
             NodeTypeId::Element(e) =>
                 LayoutNodeType::Element(e.into()),
-            NodeTypeId::CharacterData(CharacterDataTypeId::ProcessingInstruction) =>
-                LayoutNodeType::ProcessingInstruction,
             NodeTypeId::CharacterData(CharacterDataTypeId::Text) =>
                 LayoutNodeType::Text,
+            x => unreachable!("Layout should not traverse nodes of type {:?}", x),
         }
     }
 }
@@ -2704,3 +2704,4 @@ impl Into<LayoutElementType> for ElementTypeId {
         }
     }
 }
+

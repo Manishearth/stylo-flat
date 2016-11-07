@@ -12,6 +12,10 @@ this.EXPORTED_SYMBOLS = ["ExtensionContent"];
  * This file handles the content process side of extensions. It mainly
  * takes care of content script injection, content script APIs, and
  * messaging.
+ *
+ * This file is also the initial entry point for addon processes.
+ * ExtensionChild.jsm is responsible for functionality specific to addon
+ * processes.
  */
 
 const Ci = Components.interfaces;
@@ -39,6 +43,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "Schemas",
                                   "resource://gre/modules/Schemas.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "WebNavigationFrames",
                                   "resource://gre/modules/WebNavigationFrames.jsm");
+
+Cu.import("resource://gre/modules/ExtensionChild.jsm");
 
 Cu.import("resource://gre/modules/ExtensionUtils.jsm");
 var {
@@ -95,6 +101,7 @@ function Script(extension, options, deferred = PromiseUtils.defer()) {
   this.js = this.options.js || [];
   this.css = this.options.css || [];
   this.remove_css = this.options.remove_css;
+  this.match_about_blank = this.options.match_about_blank;
 
   this.deferred = deferred;
 
@@ -134,6 +141,12 @@ Script.prototype = {
       return false;
     }
 
+    if (this.match_about_blank && ["about:blank", "about:srcdoc"].includes(uri.spec)) {
+      // When matching about:blank/srcdoc documents, the checks below
+      // need to be performed against the "owner" document's URI.
+      uri = window.document.nodePrincipal.URI;
+    }
+
     if (!(this.matches_.matches(uri) || this.matches_host_.matchesIgnoringPath(uri))) {
       return false;
     }
@@ -159,8 +172,6 @@ Script.prototype = {
     } else if (!this.options.all_frames && window.top != window) {
       return false;
     }
-
-    // TODO: match_about_blank.
 
     return true;
   },
@@ -272,8 +283,6 @@ class ExtensionContext extends BaseContext {
     let attrs = contentPrincipal.originAttributes;
     attrs.addonId = this.extension.id;
     let extensionPrincipal = ssm.createCodebasePrincipal(this.extension.baseURI, attrs);
-    Object.defineProperty(this, "principal",
-                          {value: extensionPrincipal, enumerable: true, configurable: true});
 
     if (ssm.isSystemPrincipal(contentPrincipal)) {
       // Make sure we don't hand out the system principal by accident.
@@ -322,6 +331,12 @@ class ExtensionContext extends BaseContext {
       `, this.sandbox);
     }
 
+    Object.defineProperty(this, "principal", {
+      value: Cu.getObjectPrincipal(this.sandbox),
+      enumerable: true,
+      configurable: true,
+    });
+
     let url = contentWindow.location.href;
     // The |sender| parameter is passed directly to the extension.
     let sender = {id: this.extension.uuid, frameId, url};
@@ -338,7 +353,7 @@ class ExtensionContext extends BaseContext {
     let localApis = {};
     apiManager.generateAPIs(this, localApis);
     this.childManager = new ChildAPIManager(this, this.messageManager, localApis, {
-      type: "content_script",
+      envType: "content_parent",
       url,
     });
 
@@ -416,11 +431,13 @@ DocumentManager = {
   extensionPageWindows: new Map(),
 
   init() {
+    Services.obs.addObserver(this, "content-document-global-created", false);
     Services.obs.addObserver(this, "document-element-inserted", false);
     Services.obs.addObserver(this, "inner-window-destroyed", false);
   },
 
   uninit() {
+    Services.obs.removeObserver(this, "content-document-global-created");
     Services.obs.removeObserver(this, "document-element-inserted");
     Services.obs.removeObserver(this, "inner-window-destroyed");
   },
@@ -436,10 +453,41 @@ DocumentManager = {
     return "document_start";
   },
 
+  loadInto(window) {
+    // Enable the content script APIs should be available in subframes' window
+    // if it is recognized as a valid addon id (see Bug 1214658 for rationale).
+    const {
+      NO_PRIVILEGES,
+      CONTENTSCRIPT_PRIVILEGES,
+      FULL_PRIVILEGES,
+    } = ExtensionManagement.API_LEVELS;
+    let extensionId = ExtensionManagement.getAddonIdForWindow(window);
+    let apiLevel = ExtensionManagement.getAPILevelForWindow(window, extensionId);
+
+    if (apiLevel != NO_PRIVILEGES) {
+      let extension = ExtensionManager.get(extensionId);
+      if (extension) {
+        if (apiLevel == CONTENTSCRIPT_PRIVILEGES) {
+          DocumentManager.getExtensionPageContext(extension, window);
+        } else if (apiLevel == FULL_PRIVILEGES) {
+          ExtensionChild.createExtensionContext(extension, window);
+        }
+      }
+    }
+  },
+
   observe: function(subject, topic, data) {
-    if (topic == "document-element-inserted") {
+    // For some types of documents (about:blank), we only see the first
+    // notification, for others (data: URIs) we only observe the second.
+    if (topic == "content-document-global-created" || topic == "document-element-inserted") {
       let document = subject;
       let window = document && document.defaultView;
+
+      if (topic == "content-document-global-created") {
+        window = subject;
+        document = window && window.document;
+      }
+
       if (!document || !document.location || !window) {
         return;
       }
@@ -451,19 +499,13 @@ DocumentManager = {
         return;
       }
 
-      // Enable the content script APIs should be available in subframes' window
-      // if it is recognized as a valid addon id (see Bug 1214658 for rationale).
-      const {CONTENTSCRIPT_PRIVILEGES} = ExtensionManagement.API_LEVELS;
-      let extensionId = ExtensionManagement.getAddonIdForWindow(window);
-
-      if (ExtensionManagement.getAPILevelForWindow(window, extensionId) == CONTENTSCRIPT_PRIVILEGES) {
-        let extension = ExtensionManager.get(extensionId);
-        if (extension) {
-          DocumentManager.getExtensionPageContext(extension, window);
-        }
+      // Load on document-element-inserted, except for about:blank which doesn't
+      // see it, and needs special late handling on DOMContentLoaded event.
+      if (topic === "document-element-inserted") {
+        this.loadInto(window);
+        this.trigger("document_start", window);
       }
 
-      this.trigger("document_start", window);
       /* eslint-disable mozilla/balanced-listeners */
       window.addEventListener("DOMContentLoaded", this, true);
       window.addEventListener("load", this, true);
@@ -489,6 +531,8 @@ DocumentManager = {
         context.close();
         this.extensionPageWindows.delete(windowId);
       }
+
+      ExtensionChild.destroyExtensionContext(windowId);
     }
   },
 
@@ -505,6 +549,12 @@ DocumentManager = {
     // Need to check if we're still on the right page? Greasemonkey does this.
 
     if (event.type == "DOMContentLoaded") {
+      // By this time, we can be sure if this is an explicit about:blank
+      // document, and if it needs special late loading and fake trigger.
+      if (window.location.href === "about:blank") {
+        this.loadInto(window);
+        this.trigger("document_start", window);
+      }
       this.trigger("document_end", window);
     } else if (event.type == "load") {
       this.trigger("document_idle", window);
@@ -635,6 +685,8 @@ DocumentManager = {
       }
     }
 
+    ExtensionChild.shutdownExtension(extensionId);
+
     MessageChannel.abortResponses({extensionId});
 
     this.extensionCount--;
@@ -644,9 +696,7 @@ DocumentManager = {
   },
 
   trigger(when, window) {
-    let state = this.getWindowState(window);
-
-    if (state == "document_start") {
+    if (when === "document_start") {
       for (let extension of ExtensionManager.extensions.values()) {
         for (let script of extension.scripts) {
           if (script.matches(window)) {
@@ -658,7 +708,7 @@ DocumentManager = {
     } else {
       let contexts = this.contentScriptWindows.get(getInnerWindowID(window)) || new Map();
       for (let context of contexts.values()) {
-        context.triggerScripts(state);
+        context.triggerScripts(this.getWindowState(window));
       }
     }
   },
@@ -673,11 +723,15 @@ function BrowserExtensionContent(data) {
   this.webAccessibleResources = new MatchGlobs(data.webAccessibleResources);
   this.whiteListedHosts = new MatchPattern(data.whiteListedHosts);
   this.permissions = data.permissions;
+  this.principal = data.principal;
 
   this.localeData = new LocaleData(data.localeData);
 
   this.manifest = data.manifest;
   this.baseURI = Services.io.newURI(data.baseURL, null, null);
+
+  // Only used in addon processes.
+  this.views = new Set();
 
   let uri = Services.io.newURI(data.resourceURL, null, null);
 
@@ -703,6 +757,10 @@ BrowserExtensionContent.prototype = {
   },
 
   hasPermission(perm) {
+    let match = /^manifest:(.*)/.exec(perm);
+    if (match) {
+      return this.manifest[match[1]] != null;
+    }
     return this.permissions.has(perm);
   },
 };
@@ -713,6 +771,7 @@ ExtensionManager = {
 
   init() {
     Schemas.init();
+    ExtensionChild.initOnce();
 
     Services.cpmm.addMessageListener("Extension:Startup", this);
     Services.cpmm.addMessageListener("Extension:Shutdown", this);
@@ -884,9 +943,11 @@ this.ExtensionContent = {
 
   init(global) {
     this.globals.set(global, new ExtensionGlobal(global));
+    ExtensionChild.init(global);
   },
 
   uninit(global) {
+    ExtensionChild.uninit(global);
     this.globals.get(global).uninit();
     this.globals.delete(global);
   },

@@ -379,9 +379,6 @@ pref("browser.search.hiddenOneOffs", "");
 
 pref("browser.search.reset.enabled", true);
 
-pref("browser.usedOnWindows10", false);
-pref("browser.usedOnWindows10.introURL", "https://www.mozilla.org/%LOCALE%/firefox/windows-10/welcome/?utm_source=firefox-browser&utm_medium=firefox-browser");
-
 pref("browser.sessionhistory.max_entries", 50);
 
 // Built-in default permissions.
@@ -439,6 +436,8 @@ pref("browser.tabs.drawInTitlebar", true);
 pref("browser.tabs.selectOwnerOnClose", true);
 
 pref("browser.tabs.showAudioPlayingIcon", true);
+// This should match Chromium's audio indicator delay.
+pref("browser.tabs.delayHidingAudioPlayingIconMS", 3000);
 
 pref("browser.tabs.dontfocusfordialogs", true);
 
@@ -1128,11 +1127,7 @@ pref("services.sync.prefs.sync.xpinstall.whitelist.required", true);
 // user's tabs and bookmarks. Note this pref is also synced.
 pref("services.sync.syncedTabs.showRemoteIcons", true);
 
-#ifdef NIGHTLY_BUILD
 pref("services.sync.sendTabToDevice.enabled", true);
-#else
-pref("services.sync.sendTabToDevice.enabled", false);
-#endif
 
 // Developer edition preferences
 #ifdef MOZ_DEV_EDITION
@@ -1423,9 +1418,11 @@ pref("privacy.trackingprotection.introURL", "https://www.mozilla.org/%LOCALE%/fi
 #ifdef NIGHTLY_BUILD
 pref("privacy.userContext.enabled", true);
 pref("privacy.userContext.ui.enabled", true);
+pref("privacy.usercontext.about_newtab_segregation.enabled", true);
 #else
 pref("privacy.userContext.enabled", false);
 pref("privacy.userContext.ui.enabled", false);
+pref("privacy.usercontext.about_newtab_segregation.enabled", false);
 #endif
 
 #ifndef RELEASE_OR_BETA
@@ -1520,8 +1517,20 @@ pref("extensions.pocket.enabled", true);
 
 pref("signon.schemeUpgrades", true);
 
-// Enable the "Simplify Page" feature in Print Preview
+// "Simplify Page" feature in Print Preview. This feature is disabled by default
+// in toolkit.
+//
+// This feature is only enabled on Nightly for Linux until bug 1306295 is fixed.
+// For non-Linux, this feature is only enabled up to early Beta.
+#ifdef UNIX_BUT_NOT_MAC
+#if defined(NIGHTLY_BUILD)
 pref("print.use_simplify_page", true);
+#endif
+#else
+#if defined(EARLY_BETA_OR_EARLIER)
+pref("print.use_simplify_page", true);
+#endif
+#endif
 
 // Space separated list of URLS that are allowed to send objects (instead of
 // only strings) through webchannels. This list is duplicated in mobile/android/app/mobile.js
@@ -1530,10 +1539,10 @@ pref("webchannel.allowObject.urlWhitelist", "https://accounts.firefox.com https:
 // Whether or not the browser should scan for unsubmitted
 // crash reports, and then show a notification for submitting
 // those reports.
-#ifdef RELEASE_OR_BETA
-pref("browser.crashReports.unsubmittedCheck.enabled", false);
-#else
+#ifdef EARLY_BETA_OR_EARLIER
 pref("browser.crashReports.unsubmittedCheck.enabled", true);
+#else
+pref("browser.crashReports.unsubmittedCheck.enabled", false);
 #endif
 
 // chancesUntilSuppress is how many times we'll show the unsubmitted

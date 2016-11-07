@@ -2,16 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use azure::azure::{AzColor, AzFloat};
+use azure::azure::AzFloat;
 use azure::azure_hl::{AntialiasMode, CapStyle, CompositionOp, JoinStyle};
 use azure::azure_hl::{BackendType, DrawOptions, DrawTarget, Pattern, StrokeOptions, SurfaceFormat};
-use azure::azure_hl::{ColorPattern, DrawSurfaceOptions, Filter, PathBuilder};
+use azure::azure_hl::{Color, ColorPattern, DrawSurfaceOptions, Filter, PathBuilder};
 use canvas_traits::*;
 use euclid::matrix2d::Matrix2D;
 use euclid::point::Point2D;
 use euclid::rect::Rect;
 use euclid::size::Size2D;
-use gfx_traits::color;
 use ipc_channel::ipc::{self, IpcSender};
 use ipc_channel::ipc::IpcSharedMemory;
 use num_traits::ToPrimitive;
@@ -58,8 +57,8 @@ pub struct CanvasPaintThread<'a> {
     path_builder: PathBuilder,
     state: CanvasPaintState<'a>,
     saved_states: Vec<CanvasPaintState<'a>>,
-    webrender_api: Option<webrender_traits::RenderApi>,
-    webrender_image_key: Option<webrender_traits::ImageKey>,
+    webrender_api: webrender_traits::RenderApi,
+    webrender_image_key: webrender_traits::ImageKey,
 }
 
 #[derive(Clone)]
@@ -73,7 +72,7 @@ struct CanvasPaintState<'a> {
     shadow_offset_x: f64,
     shadow_offset_y: f64,
     shadow_blur: f64,
-    shadow_color: AzColor,
+    shadow_color: Color,
 }
 
 impl<'a> CanvasPaintState<'a> {
@@ -86,26 +85,26 @@ impl<'a> CanvasPaintState<'a> {
 
         CanvasPaintState {
             draw_options: DrawOptions::new(1.0, CompositionOp::Over, antialias),
-            fill_style: Pattern::Color(ColorPattern::new(color::black())),
-            stroke_style: Pattern::Color(ColorPattern::new(color::black())),
+            fill_style: Pattern::Color(ColorPattern::new(Color::black())),
+            stroke_style: Pattern::Color(ColorPattern::new(Color::black())),
             stroke_opts: StrokeOptions::new(1.0, JoinStyle::MiterOrBevel, CapStyle::Butt, 10.0, &[]),
             transform: Matrix2D::identity(),
             shadow_offset_x: 0.0,
             shadow_offset_y: 0.0,
             shadow_blur: 0.0,
-            shadow_color: color::transparent(),
+            shadow_color: Color::transparent(),
         }
     }
 }
 
 impl<'a> CanvasPaintThread<'a> {
     fn new(size: Size2D<i32>,
-           webrender_api_sender: Option<webrender_traits::RenderApiSender>,
+           webrender_api_sender: webrender_traits::RenderApiSender,
            antialias: bool) -> CanvasPaintThread<'a> {
         let draw_target = CanvasPaintThread::create(size);
         let path_builder = draw_target.create_path_builder();
-        let webrender_api = webrender_api_sender.map(|wr| wr.create_api());
-        let webrender_image_key = webrender_api.as_ref().map(|wr| wr.alloc_image());
+        let webrender_api = webrender_api_sender.create_api();
+        let webrender_image_key = webrender_api.alloc_image();
         CanvasPaintThread {
             drawtarget: draw_target,
             path_builder: path_builder,
@@ -119,7 +118,7 @@ impl<'a> CanvasPaintThread<'a> {
     /// Creates a new `CanvasPaintThread` and returns an `IpcSender` to
     /// communicate with it.
     pub fn start(size: Size2D<i32>,
-                 webrender_api_sender: Option<webrender_traits::RenderApiSender>,
+                 webrender_api_sender: webrender_traits::RenderApiSender,
                  antialias: bool)
                  -> IpcSender<CanvasMsg> {
         let (sender, receiver) = ipc::channel::<CanvasMsg>().unwrap();
@@ -542,14 +541,12 @@ impl<'a> CanvasPaintThread<'a> {
 
     fn send_data(&mut self, chan: IpcSender<CanvasData>) {
         self.drawtarget.snapshot().get_data_surface().with_data(|element| {
-            if let Some(ref webrender_api) = self.webrender_api {
-                let size = self.drawtarget.get_size();
-                webrender_api.update_image(self.webrender_image_key.unwrap(),
-                                           size.width as u32,
-                                           size.height as u32,
-                                           webrender_traits::ImageFormat::RGBA8,
-                                           element.into());
-            }
+            let size = self.drawtarget.get_size();
+            self.webrender_api.update_image(self.webrender_image_key,
+                                            size.width as u32,
+                                            size.height as u32,
+                                            webrender_traits::ImageFormat::RGBA8,
+                                            element.into());
 
             let pixel_data = CanvasPixelData {
                 image_data: IpcSharedMemory::from_bytes(element),
@@ -667,7 +664,7 @@ impl<'a> CanvasPaintThread<'a> {
         self.state.shadow_blur = value;
     }
 
-    fn set_shadow_color(&mut self, value: AzColor) {
+    fn set_shadow_color(&mut self, value: Color) {
         self.state.shadow_color = value;
     }
 
@@ -710,9 +707,7 @@ impl<'a> CanvasPaintThread<'a> {
 
 impl<'a> Drop for CanvasPaintThread<'a> {
     fn drop(&mut self) {
-        if let Some(ref mut wr) = self.webrender_api {
-            wr.delete_image(self.webrender_image_key.unwrap());
-        }
+        self.webrender_api.delete_image(self.webrender_image_key);
     }
 }
 

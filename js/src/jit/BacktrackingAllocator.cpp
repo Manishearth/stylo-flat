@@ -661,17 +661,20 @@ BacktrackingAllocator::buildLivenessInfo()
                 if (inputAlloc->isUse()) {
                     LUse* use = inputAlloc->toUse();
 
-                    // Call uses should always be at-start or fixed, since
-                    // calls use all registers.
+                    // Call uses should always be at-start, since calls use all
+                    // registers.
                     MOZ_ASSERT_IF(ins->isCall() && !inputAlloc.isSnapshotInput(),
-                                  use->isFixedRegister() || use->usedAtStart());
+                                  use->usedAtStart());
 
 #ifdef DEBUG
                     // Don't allow at-start call uses if there are temps of the same kind,
-                    // so that we don't assign the same register.
+                    // so that we don't assign the same register. Only allow this when the
+                    // use and temp are fixed registers, as they can't alias.
                     if (ins->isCall() && use->usedAtStart()) {
-                        for (size_t i = 0; i < ins->numTemps(); i++)
-                            MOZ_ASSERT(vreg(ins->getTemp(i)).type() != vreg(use).type());
+                        for (size_t i = 0; i < ins->numTemps(); i++) {
+                            MOZ_ASSERT(vreg(ins->getTemp(i)).type() != vreg(use).type() ||
+                                       (use->isFixedRegister() && ins->getTemp(i)->isFixed()));
+                        }
                     }
 
                     // If there are both useRegisterAtStart(x) and useRegister(y)
@@ -692,12 +695,7 @@ BacktrackingAllocator::buildLivenessInfo()
                     if (use->policy() == LUse::RECOVERED_INPUT)
                         continue;
 
-                    // Fixed uses on calls are specially overridden to happen
-                    // at the input position.
-                    CodePosition to =
-                        (use->usedAtStart() || (ins->isCall() && use->isFixedRegister()))
-                        ? inputOf(*ins)
-                        : outputOf(*ins);
+                    CodePosition to = use->usedAtStart() ? inputOf(*ins) : outputOf(*ins);
                     if (use->isFixedRegister()) {
                         LAllocation reg(AnyRegister::FromCode(use->registerCode()));
                         for (size_t i = 0; i < ins->numDefs(); i++) {
@@ -1247,7 +1245,7 @@ bool
 BacktrackingAllocator::processBundle(MIRGenerator* mir, LiveBundle* bundle)
 {
     if (JitSpewEnabled(JitSpew_RegAlloc)) {
-        JitSpew(JitSpew_RegAlloc, "Allocating %s [priority %lu] [weight %lu]",
+        JitSpew(JitSpew_RegAlloc, "Allocating %s [priority %" PRIuSIZE "] [weight %" PRIuSIZE "]",
                 bundle->toString().get(), computePriority(bundle), computeSpillWeight(bundle));
     }
 
@@ -1439,13 +1437,13 @@ BacktrackingAllocator::tryAllocateRegister(PhysicalRegister& r, LiveBundle* bund
         if (JitSpewEnabled(JitSpew_RegAlloc)) {
             if (aliasedConflicting.length() == 1) {
                 LiveBundle* existing = aliasedConflicting[0];
-                JitSpew(JitSpew_RegAlloc, "  %s collides with %s [weight %lu]",
+                JitSpew(JitSpew_RegAlloc, "  %s collides with %s [weight %" PRIuSIZE "]",
                         r.reg.name(), existing->toString().get(), computeSpillWeight(existing));
             } else {
                 JitSpew(JitSpew_RegAlloc, "  %s collides with the following", r.reg.name());
                 for (size_t i = 0; i < aliasedConflicting.length(); i++) {
                     LiveBundle* existing = aliasedConflicting[i];
-                    JitSpew(JitSpew_RegAlloc, "      %s [weight %lu]",
+                    JitSpew(JitSpew_RegAlloc, "      %s [weight %" PRIuSIZE "]",
                             existing->toString().get(), computeSpillWeight(existing));
                 }
             }
@@ -1484,7 +1482,7 @@ bool
 BacktrackingAllocator::evictBundle(LiveBundle* bundle)
 {
     if (JitSpewEnabled(JitSpew_RegAlloc)) {
-        JitSpew(JitSpew_RegAlloc, "  Evicting %s [priority %lu] [weight %lu]",
+        JitSpew(JitSpew_RegAlloc, "  Evicting %s [priority %" PRIuSIZE "] [weight %" PRIuSIZE "]",
                 bundle->toString().get(), computePriority(bundle), computeSpillWeight(bundle));
     }
 
@@ -2298,7 +2296,8 @@ LiveBundle::toString() const
 {
     AutoEnterOOMUnsafeRegion oomUnsafe;
 
-    char *buf = JS_smprintf("");
+    // Suppress -Wformat warning.
+    char *buf = JS_smprintf("%s", "");
 
     for (LiveRange::BundleLinkIterator iter = rangesBegin(); buf && iter; iter++) {
         buf = JS_sprintf_append(buf, "%s %s",
@@ -2777,6 +2776,13 @@ BacktrackingAllocator::trySplitBeforeFirstRegisterUse(LiveBundle* bundle, LiveBu
     for (LiveRange::BundleLinkIterator iter = bundle->rangesBegin(); iter; iter++) {
         LiveRange* range = LiveRange::get(*iter);
 
+        if (!conflict || range->from() > conflictEnd) {
+            if (range->hasDefinition() && isRegisterDefinition(range)) {
+                firstRegisterFrom = range->from();
+                break;
+            }
+        }
+
         for (UsePositionIterator iter(range->usesBegin()); iter; iter++) {
             LNode* ins = insData[iter->pos];
 
@@ -2787,6 +2793,8 @@ BacktrackingAllocator::trySplitBeforeFirstRegisterUse(LiveBundle* bundle, LiveBu
                 }
             }
         }
+        if (firstRegisterFrom.bits())
+            break;
     }
 
     if (!firstRegisterFrom.bits()) {

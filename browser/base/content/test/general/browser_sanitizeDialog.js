@@ -136,7 +136,6 @@ add_task(function* test_history_downloads_checked() {
   let promiseSanitized = promiseSanitizationComplete();
 
   yield PlacesTestUtils.addVisits(places);
-  let totalHistoryVisits = uris.length + olderURIs.length;
 
   let wh = new WindowHelper();
   wh.onload = function () {
@@ -633,7 +632,7 @@ add_task(function* test_offline_apps_permissions() {
 var now_mSec = Date.now();
 var now_uSec = now_mSec * 1000;
 
-///////////////////////////////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////////////////////////////
 
 /**
  * This wraps the dialog and provides some convenience methods for interacting
@@ -902,7 +901,7 @@ function promiseAddFormEntryWithMinutesAgo(aMinutesAgo) {
   return new Promise((resolve, reject) =>
     FormHistory.update({ op: "add", fieldname: name, value: "dummy", firstUsed: timestamp },
                        { handleError: function (error) {
-                           do_throw("Error occurred updating form history: " + error);
+                           throw new Error("Error occurred updating form history: " + error);
                            reject();
                          },
                          handleCompletion: function (reason) {
@@ -922,7 +921,7 @@ function formNameExists(name)
     FormHistory.count({ fieldname: name },
                       { handleResult: result => count = result,
                         handleError: function (error) {
-                          do_throw("Error occurred searching form history: " + error);
+                          throw new Error("Error occurred searching form history: " + error);
                           reject(error);
                         },
                         handleCompletion: function (reason) {
@@ -953,7 +952,7 @@ function* blankSlate() {
         }
       },
       handleError(error) {
-        do_throw("Error occurred updating form history: " + error);
+        throw new Error("Error occurred updating form history: " + error);
         reject(error);
       }
     });

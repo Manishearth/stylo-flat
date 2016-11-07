@@ -40,7 +40,6 @@ DIRS += [
     'animation',
     'apps',
     'base',
-    'bluetooth',
     'archivereader',
     'bindings',
     'battery',
@@ -78,7 +77,6 @@ DIRS += [
     'settings',
     'storage',
     'svg',
-    'mobilemessage',
     'time',
     'locales',
     'network',
@@ -89,26 +87,20 @@ DIRS += [
     'system',
     'ipc',
     'workers',
-    'camera',
     'audiochannel',
     'broadcastchannel',
     'messagechannel',
     'promise',
     'smil',
-    'telephony',
-    'tv',
     'url',
-    'voicemail',
     'inputmethod',
     'webidl',
     'xbl',
     'xml',
     'xslt',
     'xul',
-    'resourcestats',
     'manifest',
     'vr',
-    'newapps',
     'u2f',
     'console',
     'performance',
@@ -124,14 +116,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
         'tethering',
         'wifi',
     ]
-
-if CONFIG['MOZ_B2G_RIL']:
-    DIRS += [
-        'wappush',
-    ]
-
-if CONFIG['MOZ_NFC']:
-    DIRS += ['nfc']
 
 if CONFIG['MOZ_SECUREELEMENT']:
     DIRS += ['secureelement']

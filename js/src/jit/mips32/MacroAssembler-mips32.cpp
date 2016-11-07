@@ -249,8 +249,8 @@ template void
 MacroAssemblerMIPS::ma_addTestOverflow<Label*>(Register rd, Register rs,
                                                Register rt, Label* overflow);
 template void
-MacroAssemblerMIPS::ma_addTestOverflow<wasm::JumpTarget>(Register rd, Register rs, Register rt,
-                                                         wasm::JumpTarget overflow);
+MacroAssemblerMIPS::ma_addTestOverflow<wasm::TrapDesc>(Register rd, Register rs, Register rt,
+                                                       wasm::TrapDesc overflow);
 
 template <typename L>
 void
@@ -281,8 +281,8 @@ template void
 MacroAssemblerMIPS::ma_addTestOverflow<Label*>(Register rd, Register rs,
                                                Imm32 imm, Label* overflow);
 template void
-MacroAssemblerMIPS::ma_addTestOverflow<wasm::JumpTarget>(Register rd, Register rs, Imm32 imm,
-                                                         wasm::JumpTarget overflow);
+MacroAssemblerMIPS::ma_addTestOverflow<wasm::TrapDesc>(Register rd, Register rs, Imm32 imm,
+                                                       wasm::TrapDesc overflow);
 
 // Subtract.
 void
@@ -1521,18 +1521,16 @@ MacroAssemblerMIPSCompat::extractTag(const BaseIndex& address, Register scratch)
 uint32_t
 MacroAssemblerMIPSCompat::getType(const Value& val)
 {
-    jsval_layout jv = JSVAL_TO_IMPL(val);
-    return jv.s.tag;
+    return val.toNunboxTag();
 }
 
 void
 MacroAssemblerMIPSCompat::moveData(const Value& val, Register data)
 {
-    jsval_layout jv = JSVAL_TO_IMPL(val);
     if (val.isMarkable())
-        ma_li(data, ImmGCPtr(reinterpret_cast<gc::Cell*>(val.toGCThing())));
+        ma_li(data, ImmGCPtr(val.toMarkablePointer()));
     else
-        ma_li(data, Imm32(jv.s.payload.i32));
+        ma_li(data, Imm32(val.toNunboxPayload()));
 }
 
 void
@@ -2111,6 +2109,13 @@ MacroAssemblerMIPSCompat::profilerExitFrame()
     branch(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
 }
 
+void
+MacroAssembler::subFromStackPtr(Imm32 imm32)
+{
+    if (imm32.value)
+        asMasm().subPtr(imm32, StackPointer);
+}
+
 //{{{ check_macroassembler_style
 // ===============================================================
 // Stack manipulation functions.
@@ -2170,14 +2175,6 @@ MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set, LiveRegisterSet ignore)
     }
     freeStack(reservedG);
     MOZ_ASSERT(diffG == 0);
-}
-
-void
-MacroAssembler::reserveStack(uint32_t amount)
-{
-    if (amount)
-        asMasm().subPtr(Imm32(amount), StackPointer);
-    adjustFrame(amount);
 }
 
 // ===============================================================

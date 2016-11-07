@@ -665,7 +665,7 @@ const CustomizableWidgets = [
         if (aDocument.documentElement.hasAttribute("customizing")) {
           updateDisplay = false;
         }
-        //XXXgijs in some tests we get called very early, and there's no docShell on the
+        // XXXgijs in some tests we get called very early, and there's no docShell on the
         // tabbrowser. This breaks the zoom toolkit code (see bug 897410). Don't let that happen:
         let zoomFactor = 100;
         try {
@@ -1259,8 +1259,9 @@ if (AppConstants.E10S_TESTING_ONLY) {
       id: "e10s-button",
       defaultArea: CustomizableUI.AREA_PANEL,
       onBuild: function(aDocument) {
-          node.setAttribute("label", CustomizableUI.getLocalizedProperty(this, "label"));
-          node.setAttribute("tooltiptext", CustomizableUI.getLocalizedProperty(this, "tooltiptext"));
+        let node = aDocument.createElementNS(kNSXUL, "toolbarbutton");
+        node.setAttribute("label", CustomizableUI.getLocalizedProperty(this, "label"));
+        node.setAttribute("tooltiptext", CustomizableUI.getLocalizedProperty(this, "tooltiptext"));
       },
       onCommand: function(aEvent) {
         let win = aEvent.view;

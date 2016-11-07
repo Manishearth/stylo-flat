@@ -224,7 +224,6 @@ public:
   NS_IMETHOD GetTopWindow(mozIDOMWindowProxy**) override;
   NS_IMETHOD GetTopFrameElement(nsIDOMElement**) override;
   NS_IMETHOD GetNestedFrameId(uint64_t*) override;
-  NS_IMETHOD IsAppOfType(uint32_t, bool*) override;
   NS_IMETHOD GetIsContent(bool*) override;
   NS_IMETHOD GetUsePrivateBrowsing(bool*) override;
   NS_IMETHOD SetUsePrivateBrowsing(bool) override;
@@ -296,9 +295,10 @@ private:
   friend void mozilla::TimelineConsumers::AddConsumer(nsDocShell*);
   friend void mozilla::TimelineConsumers::RemoveConsumer(nsDocShell*);
   friend void mozilla::TimelineConsumers::AddMarkerForDocShell(
-    nsDocShell*, const char*, MarkerTracingType);
+    nsDocShell*, const char*, MarkerTracingType, MarkerStackRequest);
   friend void mozilla::TimelineConsumers::AddMarkerForDocShell(
-    nsDocShell*, const char*, const TimeStamp&, MarkerTracingType);
+    nsDocShell*, const char*, const TimeStamp&, MarkerTracingType,
+    MarkerStackRequest);
   friend void mozilla::TimelineConsumers::AddMarkerForDocShell(
     nsDocShell*, UniquePtr<AbstractTimelineMarker>&&);
   friend void mozilla::TimelineConsumers::PopMarkers(nsDocShell*,
@@ -727,12 +727,6 @@ protected:
   // Convenience method for getting our parent docshell. Can return null
   already_AddRefed<nsDocShell> GetParentDocshell();
 
-  // Check if we have an app redirect registered for the URI and redirect if
-  // needed. Returns true if a redirect happened, false otherwise.
-  bool DoAppRedirectIfNeeded(nsIURI* aURI,
-                             nsIDocShellLoadInfo* aLoadInfo,
-                             bool aFirstParty);
-
   // Check if aURI is about:newtab.
   bool IsAboutNewtab(nsIURI* aURI);
 
@@ -1043,7 +1037,7 @@ private:
 
   // Separate function to do the actual name (i.e. not _top, _self etc.)
   // searching for FindItemWithName.
-  nsresult DoFindItemWithName(const char16_t* aName,
+  nsresult DoFindItemWithName(const nsAString& aName,
                               nsISupports* aRequestor,
                               nsIDocShellTreeItem* aOriginalRequestor,
                               nsIDocShellTreeItem** aResult);

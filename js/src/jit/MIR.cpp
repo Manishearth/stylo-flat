@@ -39,6 +39,7 @@ using mozilla::CheckedInt;
 using mozilla::NumbersAreIdentical;
 using mozilla::IsFloat32Representable;
 using mozilla::IsNaN;
+using mozilla::IsPowerOfTwo;
 using mozilla::Maybe;
 using mozilla::DebugOnly;
 
@@ -440,7 +441,7 @@ MTest::cacheOperandMightEmulateUndefined(CompilerConstraintList* constraints)
 }
 
 MDefinition*
-MTest::foldsTo(TempAllocator& alloc)
+MTest::foldsDoubleNegation(TempAllocator& alloc)
 {
     MDefinition* op = getOperand(0);
 
@@ -451,12 +452,25 @@ MTest::foldsTo(TempAllocator& alloc)
             return MTest::New(alloc, opop->toNot()->input(), ifTrue(), ifFalse());
         return MTest::New(alloc, op->toNot()->input(), ifFalse(), ifTrue());
     }
+    return nullptr;
+}
 
+MDefinition*
+MTest::foldsConstant(TempAllocator& alloc)
+{
+    MDefinition* op = getOperand(0);
     if (MConstant* opConst = op->maybeConstantValue()) {
         bool b;
         if (opConst->valueToBoolean(&b))
             return MGoto::New(alloc, b ? ifTrue() : ifFalse());
     }
+    return nullptr;
+}
+
+MDefinition*
+MTest::foldsTypes(TempAllocator& alloc)
+{
+    MDefinition* op = getOperand(0);
 
     switch (op->type()) {
       case MIRType::Undefined:
@@ -471,6 +485,58 @@ MTest::foldsTo(TempAllocator& alloc)
       default:
         break;
     }
+    return nullptr;
+}
+
+MDefinition*
+MTest::foldsNeedlessControlFlow(TempAllocator& alloc)
+{
+    for (MInstructionIterator iter(ifTrue()->begin()), end(ifTrue()->end()); iter != end; ) {
+        MInstruction* ins = *iter++;
+        if (ins->isNop() || ins->isGoto())
+            continue;
+        if (ins->hasUses())
+            return nullptr;
+        if (!DeadIfUnused(ins))
+            return nullptr;
+    }
+
+    for (MInstructionIterator iter(ifFalse()->begin()), end(ifFalse()->end()); iter != end; ) {
+        MInstruction* ins = *iter++;
+        if (ins->isNop() || ins->isGoto())
+            continue;
+        if (ins->hasUses())
+            return nullptr;
+        if (!DeadIfUnused(ins))
+            return nullptr;
+    }
+
+    if (ifTrue()->numSuccessors() != 1 || ifFalse()->numSuccessors() != 1)
+        return nullptr;
+    if (ifTrue()->getSuccessor(0) != ifFalse()->getSuccessor(0))
+        return nullptr;
+
+    if (ifTrue()->successorWithPhis())
+        return nullptr;
+
+    return MGoto::New(alloc, ifTrue());
+}
+
+MDefinition*
+MTest::foldsTo(TempAllocator& alloc)
+{
+
+    if (MDefinition* def = foldsDoubleNegation(alloc))
+        return def;
+
+    if (MDefinition* def = foldsConstant(alloc))
+        return def;
+
+    if (MDefinition* def = foldsTypes(alloc))
+        return def;
+
+    if (MDefinition* def = foldsNeedlessControlFlow(alloc))
+        return def;
 
     return this;
 }
@@ -1322,12 +1388,12 @@ MSimdGeneralShuffle::foldsTo(TempAllocator& alloc)
 
 MInstruction*
 MSimdConvert::AddLegalized(TempAllocator& alloc, MBasicBlock* addTo, MDefinition* obj,
-                           MIRType toType, SimdSign sign)
+                           MIRType toType, SimdSign sign, wasm::TrapOffset trapOffset)
 {
     MIRType fromType = obj->type();
 
     if (SupportsUint32x4FloatConversions || sign != SimdSign::Unsigned) {
-        MInstruction* ins = New(alloc, obj, toType, sign);
+        MInstruction* ins = New(alloc, obj, toType, sign, trapOffset);
         addTo->add(ins);
         return ins;
     }
@@ -1403,7 +1469,7 @@ MSimdConvert::AddLegalized(TempAllocator& alloc, MBasicBlock* addTo, MDefinition
     if (fromType == MIRType::Float32x4 && toType == MIRType::Int32x4) {
         // The Float32x4 -> Uint32x4 conversion can throw if the input is out of
         // range. This is handled by the LFloat32x4ToUint32x4 expansion.
-        MInstruction* ins = New(alloc, obj, toType, sign);
+        MInstruction* ins = New(alloc, obj, toType, sign, trapOffset);
         addTo->add(ins);
         return ins;
     }
@@ -2260,7 +2326,7 @@ MPhi::removeAllOperands()
 }
 
 MDefinition*
-MPhi::foldsTernary()
+MPhi::foldsTernary(TempAllocator& alloc)
 {
     /* Look if this MPhi is a ternary construct.
      * This is a very loose term as it actually only checks for
@@ -2350,6 +2416,16 @@ MPhi::foldsTernary()
         return trueDef;
     }
 
+    // If testArg is an double type we can:
+    // - fold testArg ? testArg : 0.0 to MNaNToZero(testArg)
+    if (testArg->type() == MIRType::Double && mozilla::IsPositiveZero(c->numberToDouble()) &&
+        c != trueDef)
+    {
+        MNaNToZero* replace = MNaNToZero::New(alloc, testArg);
+        test->block()->insertBefore(test, replace);
+        return replace;
+    }
+
     // If testArg is a string type we can:
     // - fold testArg ? testArg : "" to testArg
     // - fold testArg ? "" : testArg to ""
@@ -2429,7 +2505,7 @@ MPhi::foldsTo(TempAllocator& alloc)
     if (MDefinition* def = operandIfRedundant())
         return def;
 
-    if (MDefinition* def = foldsTernary())
+    if (MDefinition* def = foldsTernary(alloc))
         return def;
 
     if (MDefinition* def = foldsFilterTypeSet())
@@ -2739,6 +2815,17 @@ MBinaryBitwiseInstruction::foldUnnecessaryBitop()
     if (specialization_ != MIRType::Int32)
         return this;
 
+    // Fold unsigned shift right operator when the second operand is zero and
+    // the only use is an unsigned modulo. Thus, the expression
+    // |(x >>> 0) % y| becomes |x % y|.
+    if (isUrsh() && hasOneDefUse() && IsUint32Type(this)) {
+        for (MUseDefIterator use(this); use; use++) {
+            if (use.def()->isMod() && use.def()->toMod()->isUnsigned())
+                return getOperand(0);
+            break;
+        }
+    }
+
     // Eliminate bitwise operations that are no-ops when used on integer
     // inputs, such as (x | 0).
 
@@ -2958,6 +3045,39 @@ NeedNegativeZeroCheck(MDefinition* def)
         }
     }
     return false;
+}
+
+void
+MBinaryArithInstruction::printOpcode(GenericPrinter& out) const
+{
+    MDefinition::printOpcode(out);
+
+    switch (type()) {
+      case MIRType::Int32:
+        if (isDiv())
+            out.printf(" [%s]", toDiv()->isUnsigned() ? "uint32" : "int32");
+        else if (isMod())
+            out.printf(" [%s]", toMod()->isUnsigned() ? "uint32" : "int32");
+        else
+            out.printf(" [int32]");
+        break;
+      case MIRType::Int64:
+        if (isDiv())
+            out.printf(" [%s]", toDiv()->isUnsigned() ? "uint64" : "int64");
+        else if (isMod())
+            out.printf(" [%s]", toMod()->isUnsigned() ? "uint64" : "int64");
+        else
+            out.printf(" [int64]");
+        break;
+      case MIRType::Float32:
+        out.printf(" [float]");
+        break;
+      case MIRType::Double:
+        out.printf(" [double]");
+        break;
+      default:
+        break;
+    }
 }
 
 MBinaryArithInstruction*
@@ -3390,7 +3510,7 @@ MMod::analyzeEdgeCasesForward()
 
     if (rhs()->isConstant()) {
         int32_t n = rhs()->toConstant()->toInt32();
-        if (n > 0 && !IsPowerOfTwo(n))
+        if (n > 0 && !IsPowerOfTwo(uint32_t(n)))
             canBePowerOfTwoDivisor_ = false;
     }
 }
@@ -3896,8 +4016,10 @@ MResumePoint::New(TempAllocator& alloc, MBasicBlock* block, jsbytecode* pc,
                   Mode mode)
 {
     MResumePoint* resume = new(alloc) MResumePoint(block, pc, mode);
-    if (!resume->init(alloc))
+    if (!resume->init(alloc)) {
+        block->discardPreAllocatedResumePoint(resume);
         return nullptr;
+    }
     resume->inherit(block);
     return resume;
 }
@@ -3911,8 +4033,10 @@ MResumePoint::New(TempAllocator& alloc, MBasicBlock* block, MResumePoint* model,
     // Allocate the same number of operands as the original resume point, and
     // copy operands from the operands vector and not the not from the current
     // block stack.
-    if (!resume->operands_.init(alloc, model->numAllocatedOperands()))
+    if (!resume->operands_.init(alloc, model->numAllocatedOperands())) {
+        block->discardPreAllocatedResumePoint(resume);
         return nullptr;
+    }
 
     // Copy the operands.
     for (size_t i = 0; i < operands.length(); i++)
@@ -3928,8 +4052,10 @@ MResumePoint::Copy(TempAllocator& alloc, MResumePoint* src)
                                                    src->mode());
     // Copy the operands from the original resume point, and not from the
     // current block stack.
-    if (!resume->operands_.init(alloc, src->numAllocatedOperands()))
+    if (!resume->operands_.init(alloc, src->numAllocatedOperands())) {
+        src->block()->discardPreAllocatedResumePoint(resume);
         return nullptr;
+    }
 
     // Copy the operands.
     for (size_t i = 0; i < resume->numOperands(); i++)
@@ -4067,7 +4193,7 @@ MToInt32::foldsTo(TempAllocator& alloc)
           case MIRType::Double:
             int32_t ival;
             // Only the value within the range of Int32 can be substituted as constant.
-            if (mozilla::NumberEqualsInt32(input->toConstant()->numberToDouble(), &ival))
+            if (mozilla::NumberIsInt32(input->toConstant()->numberToDouble(), &ival))
                 return MConstant::New(alloc, Int32Value(ival));
             break;
           default:
@@ -4075,8 +4201,17 @@ MToInt32::foldsTo(TempAllocator& alloc)
         }
     }
 
-    if (input->type() == MIRType::Int32)
+    // Do not fold the TruncateToInt32 node when the input is uint32 (e.g. ursh
+    // with a zero constant. Consider the test jit-test/tests/ion/bug1247880.js,
+    // where the relevant code is: |(imul(1, x >>> 0) % 2)|. The imul operator
+    // is folded to a MTruncateToInt32 node, which will result in this MIR:
+    // MMod(MTruncateToInt32(MUrsh(x, MConstant(0))), MConstant(2)). Note that
+    // the MUrsh node's type is int32 (since uint32 is not implemented), and
+    // that would fold the MTruncateToInt32 node. This will make the modulo
+    // unsigned, while is should have been signed.
+    if (input->type() == MIRType::Int32 && !IsUint32Type(input))
         return input;
+
     return this;
 }
 
@@ -4094,7 +4229,15 @@ MTruncateToInt32::foldsTo(TempAllocator& alloc)
     if (input->isBox())
         input = input->getOperand(0);
 
-    if (input->type() == MIRType::Int32)
+    // Do not fold the TruncateToInt32 node when the input is uint32 (e.g. ursh
+    // with a zero constant. Consider the test jit-test/tests/ion/bug1247880.js,
+    // where the relevant code is: |(imul(1, x >>> 0) % 2)|. The imul operator
+    // is folded to a MTruncateToInt32 node, which will result in this MIR:
+    // MMod(MTruncateToInt32(MUrsh(x, MConstant(0))), MConstant(2)). Note that
+    // the MUrsh node's type is int32 (since uint32 is not implemented), and
+    // that would fold the MTruncateToInt32 node. This will make the modulo
+    // unsigned, while is should have been signed.
+    if (input->type() == MIRType::Int32 && !IsUint32Type(input))
         return input;
 
     if (input->type() == MIRType::Double && input->isConstant()) {
@@ -5075,6 +5218,23 @@ MLoadSlot::foldsTo(TempAllocator& alloc)
         return def;
 
     return this;
+}
+
+void
+MLoadSlot::printOpcode(GenericPrinter& out) const
+{
+    MDefinition::printOpcode(out);
+    out.printf(" %d", slot());
+}
+
+void
+MStoreSlot::printOpcode(GenericPrinter& out) const
+{
+    PrintOpcodeName(out, op());
+    out.printf(" ");
+    getOperand(0)->printName(out);
+    out.printf(" %d ", slot());
+    getOperand(1)->printName(out);
 }
 
 MDefinition*

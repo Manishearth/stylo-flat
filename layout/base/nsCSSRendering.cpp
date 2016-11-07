@@ -667,10 +667,6 @@ nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
   }
 
   nsStyleBorder newStyleBorder(*styleBorder);
-  // We could do something fancy to avoid the TrackImage/UntrackImage
-  // work, but it doesn't seem worth it.  (We need to call TrackImage
-  // since we're not going through nsRuleNode::ComputeBorderData.)
-  newStyleBorder.TrackImage(aPresContext);
 
   NS_FOR_CSS_SIDES(side) {
     nscolor color = aStyleContext->GetVisitedDependentColor(
@@ -681,11 +677,6 @@ nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
     PaintBorderWithStyleBorder(aPresContext, aRenderingContext, aForFrame,
                                aDirtyRect, aBorderArea, newStyleBorder,
                                aStyleContext, aFlags, aSkipSides);
-
-  // We could do something fancy to avoid the TrackImage/UntrackImage
-  // work, but it doesn't seem worth it.  (We need to call UntrackImage
-  // since we're not going through nsStyleBorder::Destroy.)
-  newStyleBorder.UntrackImage(aPresContext);
 
   return result;
 }
@@ -3333,6 +3324,9 @@ nsCSSRendering::ComputeImageLayerPositioningArea(nsPresContext* aPresContext,
 
   // Background images are tiled over the 'background-clip' area
   // but the origin of the tiling is based on the 'background-origin' area
+  // XXX: Bug 1303623 will bring in new origin value, we should iterate from
+  // NS_STYLE_IMAGELAYER_ORIGIN_MARGIN instead of
+  // NS_STYLE_IMAGELAYER_ORIGIN_BORDER.
   if (aLayer.mOrigin != NS_STYLE_IMAGELAYER_ORIGIN_BORDER && geometryFrame) {
     nsMargin border = geometryFrame->GetUsedBorder();
     if (aLayer.mOrigin != NS_STYLE_IMAGELAYER_ORIGIN_PADDING) {
@@ -5029,8 +5023,13 @@ ShouldTreatAsCompleteDueToSyncDecode(const nsStyleImage* aImage,
     return false;
   }
 
+  imgRequestProxy* req = aImage->GetImageData();
+  if (!req) {
+    return false;
+  }
+
   uint32_t status = 0;
-  if (NS_FAILED(aImage->GetImageData()->GetImageStatus(&status))) {
+  if (NS_FAILED(req->GetImageStatus(&status))) {
     return false;
   }
 
@@ -5038,7 +5037,7 @@ ShouldTreatAsCompleteDueToSyncDecode(const nsStyleImage* aImage,
     // The image is "complete" since it's a corrupt image. If we created an
     // imgIContainer at all, return true.
     nsCOMPtr<imgIContainer> image;
-    aImage->GetImageData()->GetImage(getter_AddRefs(image));
+    req->GetImage(getter_AddRefs(image));
     return bool(image);
   }
 
@@ -5075,8 +5074,9 @@ nsImageRenderer::PrepareImage()
   }
 
   switch (mType) {
-    case eStyleImageType_Image:
-    {
+    case eStyleImageType_Image: {
+      MOZ_ASSERT(mImage->GetImageData(),
+                 "must have image data, since we checked IsEmpty above");
       nsCOMPtr<imgIContainer> srcImage;
       DebugOnly<nsresult> rv =
         mImage->GetImageData()->GetImage(getter_AddRefs(srcImage));

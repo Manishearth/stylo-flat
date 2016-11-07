@@ -14,7 +14,7 @@
 #![feature(on_unimplemented)]
 #![feature(optin_builtin_traits)]
 #![feature(plugin)]
-#![feature(question_mark)]
+#![feature(proc_macro)]
 #![feature(slice_patterns)]
 #![feature(stmt_expr_attributes)]
 #![feature(try_from)]
@@ -25,7 +25,6 @@
 
 #![doc = "The script crate contains all matters DOM."]
 
-#![plugin(heapsize_plugin)]
 #![plugin(phf_macros)]
 #![plugin(plugins)]
 
@@ -47,6 +46,7 @@ extern crate euclid;
 extern crate fnv;
 extern crate gfx_traits;
 extern crate heapsize;
+#[macro_use] extern crate heapsize_derive;
 extern crate html5ever;
 extern crate hyper;
 extern crate hyper_serde;
@@ -54,6 +54,8 @@ extern crate image;
 extern crate ipc_channel;
 #[macro_use]
 extern crate js;
+#[macro_use]
+extern crate jstraceable_derive;
 extern crate libc;
 #[macro_use]
 extern crate log;
@@ -82,6 +84,7 @@ extern crate smallvec;
 #[macro_use(atom, ns)] extern crate string_cache;
 #[macro_use]
 extern crate style;
+extern crate style_traits;
 extern crate time;
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 extern crate tinyfiledialogs;

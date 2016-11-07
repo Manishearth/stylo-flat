@@ -9,7 +9,6 @@
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
 #![feature(custom_derive)]
-#![feature(mpsc_select)]
 #![feature(plugin)]
 #![feature(proc_macro)]
 #![feature(range_contains)]
@@ -17,7 +16,6 @@
 #![feature(structural_match)]
 #![feature(unique)]
 
-#![plugin(heapsize_plugin)]
 #![plugin(plugins)]
 
 #![deny(unsafe_code)]
@@ -56,21 +54,17 @@ extern crate gfx_traits;
 extern crate harfbuzz_sys as harfbuzz;
 
 extern crate heapsize;
+#[macro_use] extern crate heapsize_derive;
 extern crate ipc_channel;
-extern crate layers;
 #[allow(unused_extern_crates)]
 #[macro_use]
 extern crate lazy_static;
 extern crate libc;
 #[macro_use]
 extern crate log;
-extern crate mime;
 extern crate msg;
 extern crate net_traits;
 extern crate ordered_float;
-#[macro_use]
-extern crate profile_traits;
-extern crate rand;
 #[macro_use]
 extern crate range;
 extern crate rustc_serialize;
@@ -93,14 +87,6 @@ extern crate util;
 extern crate webrender_traits;
 extern crate xi_unicode;
 
-pub use paint_context::PaintContext;
-
-// Misc.
-mod filters;
-
-// Private painting modules
-mod paint_context;
-
 #[deny(unsafe_code)]
 pub mod display_list;
 
@@ -109,8 +95,6 @@ pub mod display_list;
 pub mod font_cache_thread;
 pub mod font_context;
 pub mod font_template;
-
-pub mod paint_thread;
 
 // Platform-specific implementations.
 #[allow(unsafe_code)]

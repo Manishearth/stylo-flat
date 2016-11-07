@@ -16,7 +16,7 @@ const WINDOWS_CHECKOUT_CMD =
 
 queue.filter(task => {
   if (task.group == "Builds") {
-    // Remove extra builds on ASan and ARM.
+    // Remove extra builds on {A,UB}San and ARM.
     if (task.collection == "asan" || task.collection == "arm-debug") {
       return false;
     }
@@ -98,12 +98,26 @@ export default async function main() {
     image: LINUX_IMAGE
   });
 
+  await scheduleLinux("Linux 64 (debug, gyp)", {
+    command: [
+      "/bin/bash",
+      "-c",
+      "bin/checkout.sh && nss/automation/taskcluster/scripts/build_gyp.sh"
+    ],
+    env: {USE_64: "1"}, // This is only necessary for tests to work.
+    platform: "linux64",
+    collection: "gyp",
+    image: LINUX_IMAGE
+  });
+
   await scheduleLinux("Linux 64 (ASan, debug)", {
     env: {
+      UBSAN_OPTIONS: "print_stacktrace=1",
       NSS_DISABLE_ARENA_FREE_LIST: "1",
       NSS_DISABLE_UNLOAD: "1",
-      GCC_VERSION: "clang",
-      GXX_VERSION: "clang++",
+      CC: "clang",
+      CCC: "clang++",
+      USE_UBSAN: "1",
       USE_ASAN: "1",
       USE_64: "1"
     },
@@ -119,6 +133,8 @@ export default async function main() {
   await scheduleWindows("Windows 2012 64 (debug)", {
     collection: "debug"
   });
+
+  await scheduleFuzzing();
 
   await scheduleTools();
 
@@ -137,7 +153,7 @@ export default async function main() {
 
 async function scheduleLinux(name, base) {
   // Build base definition.
-  let build_base = merge(base, {
+  let build_base = merge({
     command: [
       "/bin/bash",
       "-c",
@@ -152,7 +168,7 @@ async function scheduleLinux(name, base) {
     },
     kind: "build",
     symbol: "B"
-  });
+  }, base);
 
   // The task that builds NSPR+NSS.
   let task_build = queue.scheduleTask(merge(build_base, {name}));
@@ -183,8 +199,8 @@ async function scheduleLinux(name, base) {
   queue.scheduleTask(merge(extra_base, {
     name: `${name} w/ clang-3.9`,
     env: {
-      GCC_VERSION: "clang",
-      GXX_VERSION: "clang++"
+      CC: "clang",
+      CCC: "clang++",
     },
     symbol: "clang-3.9"
   }));
@@ -192,8 +208,8 @@ async function scheduleLinux(name, base) {
   queue.scheduleTask(merge(extra_base, {
     name: `${name} w/ gcc-4.8`,
     env: {
-      GCC_VERSION: "gcc-4.8",
-      GXX_VERSION: "g++-4.8"
+      CC: "gcc-4.8",
+      CCC: "g++-4.8"
     },
     symbol: "gcc-4.8"
   }));
@@ -201,8 +217,8 @@ async function scheduleLinux(name, base) {
   queue.scheduleTask(merge(extra_base, {
     name: `${name} w/ gcc-6.1`,
     env: {
-      GCC_VERSION: "gcc-6",
-      GXX_VERSION: "g++-6"
+      CC: "gcc-6",
+      CCC: "g++-6"
     },
     symbol: "gcc-6.1"
   }));
@@ -211,6 +227,65 @@ async function scheduleLinux(name, base) {
     name: `${name} w/ NSS_DISABLE_LIBPKIX=1`,
     env: {NSS_DISABLE_LIBPKIX: "1"},
     symbol: "noLibpkix"
+  }));
+
+  return queue.submit();
+}
+
+/*****************************************************************************/
+
+async function scheduleFuzzing() {
+  let base = {
+    env: {
+      ASAN_OPTIONS: "allocator_may_return_null=1",
+      UBSAN_OPTIONS: "print_stacktrace=1",
+      CC: "clang",
+      CCC: "clang++",
+      USE_64: "1" // This is only necessary for tests to work.
+    },
+    platform: "linux64",
+    collection: "fuzz",
+    image: LINUX_IMAGE
+  };
+
+  // Build base definition.
+  let build_base = merge({
+    command: [
+      "/bin/bash",
+      "-c",
+      "bin/checkout.sh && " +
+      "nss/automation/taskcluster/scripts/build_gyp.sh -g -v --fuzz"
+    ],
+    artifacts: {
+      public: {
+        expires: 24 * 7,
+        type: "directory",
+        path: "/home/worker/artifacts"
+      }
+    },
+    kind: "build",
+    symbol: "B"
+  }, base);
+
+  // The task that builds NSPR+NSS.
+  let task_build = queue.scheduleTask(merge(build_base, {
+    name: "Linux x64 (debug, fuzz)"
+  }));
+
+  // Schedule tests.
+  queue.scheduleTask(merge(base, {
+    parent: task_build,
+    name: "Gtests",
+    command: [
+      "/bin/bash",
+      "-c",
+      "bin/checkout.sh && nss/automation/taskcluster/scripts/run_tests.sh"
+    ],
+    env: {GTESTFILTER: "*Fuzz*"},
+    symbol: "Gtest",
+    tests: "gtests",
+    cycle: "standard",
+    kind: "test"
   }));
 
   return queue.submit();
@@ -365,8 +440,8 @@ async function scheduleTools() {
     name: "scan-build-3.9",
     env: {
       USE_64: "1",
-      GCC_VERSION: "clang",
-      GXX_VERSION: "clang++"
+      CC: "clang",
+      CCC: "clang++",
     },
     artifacts: {
       public: {

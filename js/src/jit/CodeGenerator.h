@@ -52,6 +52,7 @@ class OutOfLineRegExpTester;
 class OutOfLineRegExpPrototypeOptimizable;
 class OutOfLineRegExpInstanceOptimizable;
 class OutOfLineLambdaArrow;
+class OutOfLineNaNToZero;
 
 class CodeGenerator final : public CodeGeneratorSpecific
 {
@@ -66,7 +67,8 @@ class CodeGenerator final : public CodeGeneratorSpecific
 
   public:
     MOZ_MUST_USE bool generate();
-    MOZ_MUST_USE bool generateWasm(wasm::SigIdDesc sigId, wasm::FuncOffsets *offsets);
+    MOZ_MUST_USE bool generateWasm(wasm::SigIdDesc sigId, wasm::TrapOffset trapOffset,
+                                   wasm::FuncOffsets *offsets);
     MOZ_MUST_USE bool link(JSContext* cx, CompilerConstraintList* constraints);
     MOZ_MUST_USE bool linkSharedStubs(JSContext* cx);
 
@@ -222,7 +224,7 @@ class CodeGenerator final : public CodeGeneratorSpecific
     void visitComputeThis(LComputeThis* lir);
     void visitArrayLength(LArrayLength* lir);
     void visitSetArrayLength(LSetArrayLength* lir);
-    void visitGetNextMapEntryForIterator(LGetNextMapEntryForIterator* lir);
+    void visitGetNextEntryForIterator(LGetNextEntryForIterator* lir);
     void visitTypedArrayLength(LTypedArrayLength* lir);
     void visitTypedArrayElements(LTypedArrayElements* lir);
     void visitSetDisjointTypedElements(LSetDisjointTypedElements* lir);
@@ -382,6 +384,8 @@ class CodeGenerator final : public CodeGeneratorSpecific
     void visitCheckIsObj(LCheckIsObj* ins);
     void visitCheckObjCoercible(LCheckObjCoercible* ins);
     void visitDebugCheckSelfHosted(LDebugCheckSelfHosted* ins);
+    void visitNaNToZero(LNaNToZero* ins);
+    void visitOutOfLineNaNToZero(OutOfLineNaNToZero* ool);
 
     void visitCheckOverRecursed(LCheckOverRecursed* lir);
     void visitCheckOverRecursedFailure(CheckOverRecursedFailure* ool);
@@ -458,6 +462,12 @@ class CodeGenerator final : public CodeGeneratorSpecific
 
     void emitFilterArgumentsOrEval(LInstruction* lir, Register string, Register temp1,
                                    Register temp2);
+
+    template <class IteratorObject, class OrderedHashTable>
+    void emitGetNextEntryForIterator(LGetNextEntryForIterator* lir);
+
+    template <class OrderedHashTable>
+    void emitLoadIteratorValues(Register result, Register temp, Register front);
 
     IonScriptCounts* maybeCreateScriptCounts();
 

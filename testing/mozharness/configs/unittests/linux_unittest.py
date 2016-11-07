@@ -3,7 +3,7 @@ import platform
 
 # OS Specifics
 ABS_WORK_DIR = os.path.join(os.getcwd(), "build")
-BINARY_PATH = os.path.join(ABS_WORK_DIR, "firefox", "firefox-bin")
+BINARY_PATH = os.path.join(ABS_WORK_DIR, "application", "firefox", "firefox-bin")
 INSTALLER_PATH = os.path.join(ABS_WORK_DIR, "installer.tar.bz2")
 XPCSHELL_NAME = "xpcshell"
 EXE_SUFFIX = ""
@@ -215,7 +215,7 @@ config = {
             "tests": ["tests/reftest/tests/testing/crashtest/crashtests.list"]
         },
         "jsreftest": {
-            "options":["--extra-profile-file=tests/jsreftest/tests/user.js",
+            "options": ["--extra-profile-file=tests/jsreftest/tests/user.js",
                        "--suite=jstestbrowser"],
             "tests": ["tests/jsreftest/tests/jstests.list"]
         },
@@ -310,7 +310,14 @@ config = {
     "default_blob_upload_servers": [
         "https://blobupload.elasticbeanstalk.com",
     ],
-    "structured_suites": ["reftest"],
+    "unstructured_flavors": {"mochitest": ['jetpack'],
+                            "xpcshell": [],
+                            "gtest": [],
+                            "mozmill": [],
+                            "cppunittest": [],
+                            "jittest": [],
+                            "mozbase": [],
+                            },
     "blob_uploader_auth_file": os.path.join(os.getcwd(), "oauth.txt"),
     "download_minidump_stackwalk": True,
     "minidump_stackwalk_path": MINIDUMP_STACKWALK_PATH,

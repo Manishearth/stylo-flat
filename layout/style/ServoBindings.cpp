@@ -29,6 +29,7 @@
 #include "mozilla/EventStates.h"
 #include "mozilla/ServoElementSnapshot.h"
 #include "mozilla/ServoRestyleManager.h"
+#include "mozilla/DeclarationBlockInlines.h"
 #include "mozilla/dom/Element.h"
 
 using namespace mozilla;
@@ -44,7 +45,7 @@ using namespace mozilla::dom;
 
 IMPL_STRONG_REF_TYPE_FOR(ServoComputedValues)
 IMPL_STRONG_REF_TYPE_FOR(RawServoStyleSheet)
-IMPL_STRONG_REF_TYPE_FOR(ServoDeclarationBlock)
+IMPL_STRONG_REF_TYPE_FOR(RawServoDeclarationBlock)
 
 #undef IMPL_STRONG_REF_TYPE_FOR
 
@@ -133,7 +134,7 @@ Gecko_MaybeCreateStyleChildrenIterator(RawGeckoNodeBorrowed aNode)
     return nullptr;
   }
 
-  Element* el = aNode->AsElement();
+  const Element* el = aNode->AsElement();
   return StyleChildrenIterator::IsNeeded(el) ? new StyleChildrenIterator(el)
                                              : nullptr;
 }
@@ -146,7 +147,7 @@ Gecko_DropStyleChildrenIterator(StyleChildrenIteratorOwned aIterator)
 }
 
 RawGeckoNodeBorrowed
-Gecko_GetNextStyleChild(StyleChildrenIteratorBorrowed aIterator)
+Gecko_GetNextStyleChild(StyleChildrenIteratorBorrowedMut aIterator)
 {
   MOZ_ASSERT(aIterator);
   return aIterator->GetNextChild();
@@ -224,13 +225,13 @@ Gecko_GetNodeFlags(RawGeckoNodeBorrowed aNode)
 void
 Gecko_SetNodeFlags(RawGeckoNodeBorrowed aNode, uint32_t aFlags)
 {
-  aNode->SetFlags(aFlags);
+  const_cast<nsINode*>(aNode)->SetFlags(aFlags);
 }
 
 void
 Gecko_UnsetNodeFlags(RawGeckoNodeBorrowed aNode, uint32_t aFlags)
 {
-  aNode->UnsetFlags(aFlags);
+  const_cast<nsINode*>(aNode)->UnsetFlags(aFlags);
 }
 
 nsStyleContext*
@@ -279,7 +280,7 @@ Gecko_StoreStyleDifference(RawGeckoNodeBorrowed aNode, nsChangeHint aChangeHintT
   MOZ_ASSERT(aNode->IsDirtyForServo(),
              "Change hint stored in a not-dirty node");
 
-  Element* aElement = aNode->AsElement();
+  const Element* aElement = aNode->AsElement();
   nsIFrame* primaryFrame = aElement->GetPrimaryFrame();
   if (!primaryFrame) {
     // If there's no primary frame, that means that either this content is
@@ -312,14 +313,26 @@ Gecko_StoreStyleDifference(RawGeckoNodeBorrowed aNode, nsChangeHint aChangeHintT
 #endif
 }
 
-ServoDeclarationBlock*
+RawServoDeclarationBlockStrongBorrowedOrNull
 Gecko_GetServoDeclarationBlock(RawGeckoElementBorrowed aElement)
 {
   const nsAttrValue* attr = aElement->GetParsedAttr(nsGkAtoms::style);
-  if (!attr || attr->Type() != nsAttrValue::eServoCSSDeclaration) {
+  if (!attr || attr->Type() != nsAttrValue::eCSSDeclaration) {
     return nullptr;
   }
-  return attr->GetServoCSSDeclarationValue();
+  DeclarationBlock* decl = attr->GetCSSDeclarationValue();
+  if (!decl) {
+    return nullptr;
+  }
+  if (decl->IsGecko()) {
+    // XXX This can happen at least when script sets style attribute
+    //     since we haven't implemented Element.style for stylo. But
+    //     we may want to turn it into an assertion after that's done.
+    NS_WARNING("stylo: requesting a Gecko declaration block?");
+    return nullptr;
+  }
+  return reinterpret_cast<const RawServoDeclarationBlockStrong*>
+    (decl->AsServo()->RefRaw());
 }
 
 void
@@ -721,6 +734,44 @@ Gecko_SetGradientImageValue(nsStyleImage* aImage, nsStyleGradient* aGradient)
   aImage->SetGradientData(aGradient);
 }
 
+static already_AddRefed<nsStyleImageRequest>
+CreateStyleImageRequest(nsStyleImageRequest::Mode aModeFlags,
+                        const uint8_t* aURLString, uint32_t aURLStringLength,
+                        ThreadSafeURIHolder* aBaseURI,
+                        ThreadSafeURIHolder* aReferrer,
+                        ThreadSafePrincipalHolder* aPrincipal)
+{
+  MOZ_ASSERT(aURLString);
+  MOZ_ASSERT(aBaseURI);
+  MOZ_ASSERT(aReferrer);
+  MOZ_ASSERT(aPrincipal);
+
+  nsString url;
+  nsDependentCSubstring urlString(reinterpret_cast<const char*>(aURLString),
+                                  aURLStringLength);
+  AppendUTF8toUTF16(urlString, url);
+  RefPtr<nsStringBuffer> urlBuffer = nsCSSValue::BufferFromString(url);
+
+  RefPtr<nsStyleImageRequest> req =
+    new nsStyleImageRequest(aModeFlags, urlBuffer, do_AddRef(aBaseURI),
+                            do_AddRef(aReferrer), do_AddRef(aPrincipal));
+  return req.forget();
+}
+
+void
+Gecko_SetUrlImageValue(nsStyleImage* aImage,
+                       const uint8_t* aURLString, uint32_t aURLStringLength,
+                       ThreadSafeURIHolder* aBaseURI,
+                       ThreadSafeURIHolder* aReferrer,
+                       ThreadSafePrincipalHolder* aPrincipal)
+{
+  RefPtr<nsStyleImageRequest> req =
+    CreateStyleImageRequest(nsStyleImageRequest::Mode::Track,
+                            aURLString, aURLStringLength,
+                            aBaseURI, aReferrer, aPrincipal);
+  aImage->SetImageRequest(req.forget());
+}
+
 void
 Gecko_CopyImageValueFrom(nsStyleImage* aImage, const nsStyleImage* aOther)
 {
@@ -760,6 +811,31 @@ Gecko_CreateGradient(uint8_t aShape,
   }
 
   return result;
+}
+
+void
+Gecko_SetListStyleImageNone(nsStyleList* aList)
+{
+  aList->mListStyleImage = nullptr;
+}
+
+void
+Gecko_SetListStyleImage(nsStyleList* aList,
+                        const uint8_t* aURLString, uint32_t aURLStringLength,
+                        ThreadSafeURIHolder* aBaseURI,
+                        ThreadSafeURIHolder* aReferrer,
+                        ThreadSafePrincipalHolder* aPrincipal)
+{
+  aList->mListStyleImage =
+    CreateStyleImageRequest(nsStyleImageRequest::Mode(0),
+                            aURLString, aURLStringLength,
+                            aBaseURI, aReferrer, aPrincipal);
+}
+
+void
+Gecko_CopyListStyleImageFrom(nsStyleList* aList, const nsStyleList* aSource)
+{
+  aList->mListStyleImage = aSource->mListStyleImage;
 }
 
 void
@@ -856,6 +932,19 @@ Gecko_NewBasicShape(mozilla::StyleBasicShapeType aType)
   return ptr.forget().take();
 }
 
+void
+Gecko_ResetFilters(nsStyleEffects* effects, size_t new_len)
+{
+  effects->mFilters.Clear();
+  effects->mFilters.SetLength(new_len);
+}
+
+void
+Gecko_CopyFiltersFrom(nsStyleEffects* aSrc, nsStyleEffects* aDest)
+{
+  aDest->mFilters = aSrc->mFilters;
+}
+
 NS_IMPL_THREADSAFE_FFI_REFCOUNTING(nsStyleCoord::Calc, Calc);
 
 nsCSSShadowArray*
@@ -866,6 +955,16 @@ Gecko_NewCSSShadowArray(uint32_t aLen)
 }
 
 NS_IMPL_THREADSAFE_FFI_REFCOUNTING(nsCSSShadowArray, CSSShadowArray);
+
+nsStyleQuoteValues*
+Gecko_NewStyleQuoteValues(uint32_t aLen)
+{
+  RefPtr<nsStyleQuoteValues> values = new nsStyleQuoteValues;
+  values->mQuotePairs.SetLength(aLen);
+  return values.forget().take();
+}
+
+NS_IMPL_THREADSAFE_FFI_REFCOUNTING(nsStyleQuoteValues, QuoteValues);
 
 #define STYLE_STRUCT(name, checkdata_cb)                                      \
                                                                               \

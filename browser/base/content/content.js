@@ -24,7 +24,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "ContentLinkHandler",
   "resource:///modules/ContentLinkHandler.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "LoginManagerContent",
   "resource://gre/modules/LoginManagerContent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FormLikeFactory",
+XPCOMUtils.defineLazyModuleGetter(this, "LoginFormFactory",
   "resource://gre/modules/LoginManagerContent.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "InsecurePasswordUtils",
   "resource://gre/modules/InsecurePasswordUtils.jsm");
@@ -65,13 +65,13 @@ addMessageListener("RemoteLogins:fillForm", function(message) {
 });
 addEventListener("DOMFormHasPassword", function(event) {
   LoginManagerContent.onDOMFormHasPassword(event, content);
-  let formLike = FormLikeFactory.createFromForm(event.target);
-  InsecurePasswordUtils.checkForInsecurePasswords(formLike);
+  let formLike = LoginFormFactory.createFromForm(event.target);
+  InsecurePasswordUtils.reportInsecurePasswords(formLike);
 });
 addEventListener("DOMInputPasswordAdded", function(event) {
   LoginManagerContent.onDOMInputPasswordAdded(event, content);
-  let formLike = FormLikeFactory.createFromField(event.target);
-  InsecurePasswordUtils.checkForInsecurePasswords(formLike);
+  let formLike = LoginFormFactory.createFromField(event.target);
+  InsecurePasswordUtils.reportInsecurePasswords(formLike);
 });
 addEventListener("pageshow", function(event) {
   LoginManagerContent.onPageShow(event, content);
@@ -1303,7 +1303,7 @@ var PageInfoListener = {
     return result;
   },
 
-  //******** Other Misc Stuff
+  //* ******* Other Misc Stuff
   // Modified from the Links Panel v2.3, http://segment7.net/mozilla/links/links.html
   // parse a node to extract the contents of the node
   getValueText: function(node)

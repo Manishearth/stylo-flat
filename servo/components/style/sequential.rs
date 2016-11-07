@@ -4,8 +4,8 @@
 
 //! Implements sequential traversal over the DOM tree.
 
-use dom::TNode;
-use traversal::{RestyleResult, DomTraversalContext};
+use dom::{StylingMode, TElement, TNode};
+use traversal::DomTraversalContext;
 
 pub fn traverse_dom<N, C>(root: N,
                           shared: &C::SharedContext)
@@ -16,14 +16,9 @@ pub fn traverse_dom<N, C>(root: N,
         where N: TNode,
               C: DomTraversalContext<N>
     {
-        debug_assert!(context.should_process(node));
-        if let RestyleResult::Continue = context.process_preorder(node) {
-            for kid in node.children() {
-                context.pre_process_child_hook(node, kid);
-                if context.should_process(kid) {
-                    doit::<N, C>(context, kid);
-                }
-            }
+        context.process_preorder(node);
+        if let Some(el) = node.as_element() {
+            C::traverse_children(el, |kid| doit::<N, C>(context, kid));
         }
 
         if context.needs_postorder_traversal() {
@@ -31,10 +26,10 @@ pub fn traverse_dom<N, C>(root: N,
         }
     }
 
+    debug_assert!(root.as_element().unwrap().styling_mode() != StylingMode::Stop);
     let context = C::new(shared, root.opaque());
-    if context.should_process(root) {
-        doit::<N, C>(&context, root);
-    }
+    doit::<N, C>(&context, root);
+
     // Clear the local LRU cache since we store stateful elements inside.
     context.local_context().style_sharing_candidate_cache.borrow_mut().clear();
 }

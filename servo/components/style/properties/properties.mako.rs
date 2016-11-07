@@ -410,15 +410,6 @@ impl Shorthand {
         }
     }
 
-    /// Serializes possible shorthand value to String.
-    pub fn serialize_shorthand_value_to_string<'a, I>(self, declarations: I, importance: Importance) -> String
-    where I: IntoIterator<Item=&'a PropertyDeclaration>, I::IntoIter: Clone {
-        let appendable_value = self.get_shorthand_appendable_value(declarations).unwrap();
-        let mut result = String::new();
-        append_declaration_value(&mut result, appendable_value, importance).unwrap();
-        result
-    }
-
     /// Serializes possible shorthand name with value to input buffer given a list of longhand declarations.
     /// On success, returns true if shorthand value is written and false if no shorthand value is present.
     pub fn serialize_shorthand_to_buffer<'a, W, I>(self,
@@ -1093,18 +1084,6 @@ impl ComputedValues {
         }
     }
 
-    pub fn style_for_child_text_node(parent: &Arc<Self>) -> Arc<Self> {
-        // Text nodes get a copy of the parent style. Inheriting all non-
-        // inherited properties into the text node is odd from a CSS
-        // perspective, but makes fragment construction easier (by making
-        // properties like vertical-align on fragments have values that
-        // match the parent element). This is an implementation detail of
-        // Servo layout that is not central to how fragment construction
-        // works, but would be difficult to change. (Text node style is
-        // also not visible to script.)
-        parent.clone()
-    }
-
     pub fn initial_values() -> &'static Self { &*INITIAL_SERVO_VALUES }
 
     #[inline]
@@ -1533,15 +1512,23 @@ static CASCADE_PROPERTY: [CascadePropertyFn; ${len(data.longhands)}] = [
     % endfor
 ];
 
+bitflags! {
+    pub flags CascadeFlags: u8 {
+        /// Whether the `ComputedValues` structure to be constructed should be considered
+        /// shareable.
+        const SHAREABLE = 0x01,
+        /// Whether to inherit all styles from the parent. If this flag is not present,
+        /// non-inherited styles are reset to their initial values.
+        const INHERIT_ALL = 0x02,
+    }
+}
+
 /// Performs the CSS cascade, computing new styles for an element from its parent style and
 /// optionally a cached related style. The arguments are:
 ///
 ///   * `viewport_size`: The size of the initial viewport.
 ///
 ///   * `applicable_declarations`: The list of CSS rules that matched.
-///
-///   * `shareable`: Whether the `ComputedValues` structure to be constructed should be considered
-///     shareable.
 ///
 ///   * `parent_style`: The parent style, if applicable; if `None`, this is the root node.
 ///
@@ -1550,14 +1537,16 @@ static CASCADE_PROPERTY: [CascadePropertyFn; ${len(data.longhands)}] = [
 ///     this that it is safe to only provide inherited declarations. If `parent_style` is `None`,
 ///     this is ignored.
 ///
+///   * `flags`: Various flags.
+///
 /// Returns the computed values and a boolean indicating whether the result is cacheable.
 pub fn cascade(viewport_size: Size2D<Au>,
                applicable_declarations: &[ApplicableDeclarationBlock],
-               shareable: bool,
                parent_style: Option<<&ComputedValues>,
                cached_style: Option<<&ComputedValues>,
                mut cascade_info: Option<<&mut CascadeInfo>,
-               mut error_reporter: StdBox<ParseErrorReporter + Send>)
+               mut error_reporter: StdBox<ParseErrorReporter + Send>,
+               flags: CascadeFlags)
                -> (ComputedValues, bool) {
     let initial_values = ComputedValues::initial_values();
     let (is_root_element, inherited_style) = match parent_style {
@@ -1591,7 +1580,7 @@ pub fn cascade(viewport_size: Size2D<Au>,
     if let (Some(cached_style), Some(parent_style)) = (cached_style, parent_style) {
         let style = cascade_with_cached_declarations(viewport_size,
                                                      &applicable_declarations,
-                                                     shareable,
+                                                     flags.contains(SHAREABLE),
                                                      parent_style,
                                                      cached_style,
                                                      custom_properties,
@@ -1600,24 +1589,35 @@ pub fn cascade(viewport_size: Size2D<Au>,
         return (style, false)
     }
 
+    let starting_style = if !flags.contains(INHERIT_ALL) {
+        ComputedValues::new(custom_properties,
+                            flags.contains(SHAREABLE),
+                            WritingMode::empty(),
+                            inherited_style.root_font_size(),
+                            % for style_struct in data.active_style_structs():
+                                % if style_struct.inherited:
+                                    inherited_style.clone_${style_struct.name_lower}(),
+                                % else:
+                                    initial_values.clone_${style_struct.name_lower}(),
+                                % endif
+                            % endfor
+                            )
+    } else {
+        ComputedValues::new(custom_properties,
+                            flags.contains(SHAREABLE),
+                            WritingMode::empty(),
+                            inherited_style.root_font_size(),
+                            % for style_struct in data.active_style_structs():
+                                inherited_style.clone_${style_struct.name_lower}(),
+                            % endfor
+                            )
+    };
+
     let mut context = computed::Context {
         is_root_element: is_root_element,
         viewport_size: viewport_size,
         inherited_style: inherited_style,
-        style: ComputedValues::new(
-            custom_properties,
-            shareable,
-            WritingMode::empty(),
-            inherited_style.root_font_size(),
-            % for style_struct in data.active_style_structs():
-            % if style_struct.inherited:
-            inherited_style
-            % else:
-            initial_values
-            % endif
-                .clone_${style_struct.name_lower}(),
-            % endfor
-        ),
+        style: starting_style,
     };
 
     // Set computed values, overwriting earlier declarations for the same property.
@@ -1648,7 +1648,8 @@ pub fn cascade(viewport_size: Size2D<Au>,
                         PropertyDeclaration::Color(_) |
                         PropertyDeclaration::Position(_) |
                         PropertyDeclaration::Float(_) |
-                        PropertyDeclaration::TextDecoration${'' if product == 'servo' else 'Line'}(_)
+                        PropertyDeclaration::TextDecoration${'' if product == 'servo' else 'Line'}(_) |
+                        PropertyDeclaration::WritingMode(_)
                     );
                     if
                         % if category_to_cascade_now == "early":
@@ -1914,18 +1915,6 @@ pub fn modify_border_style_for_inline_sides(style: &mut Arc<ComputedValues>,
     }
 }
 
-/// Adjusts the display and position properties as appropriate for an anonymous table object.
-#[cfg(feature = "servo")]
-#[inline]
-pub fn modify_style_for_anonymous_table_object(
-        style: &mut Arc<ComputedValues>,
-        new_display_value: longhands::display::computed_value::T) {
-    let mut style = Arc::make_mut(style);
-    let box_style = Arc::make_mut(&mut style.box_);
-    box_style.display = new_display_value;
-    box_style.position = longhands::position::computed_value::T::static_;
-}
-
 /// Adjusts the `position` property as necessary for the outer fragment wrapper of an inline-block.
 #[cfg(feature = "servo")]
 #[inline]
@@ -1983,6 +1972,8 @@ pub fn modify_style_for_inline_absolute_hypothetical_fragment(style: &mut Arc<Co
     }
 }
 
+
+// FIXME: https://github.com/w3c/csswg-drafts/issues/580
 pub fn is_supported_property(property: &str) -> bool {
     match_ignore_ascii_case! { property,
         % for property in data.shorthands + data.longhands:

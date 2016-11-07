@@ -1860,6 +1860,7 @@ nsSSLIOLayerNewSocket(int32_t family,
                       const char* host,
                       int32_t port,
                       nsIProxyInfo *proxy,
+                      const nsACString& firstPartyDomain,
                       PRFileDesc** fd,
                       nsISupports** info,
                       bool forSTARTTLS,
@@ -1870,7 +1871,8 @@ nsSSLIOLayerNewSocket(int32_t family,
   if (!sock) return NS_ERROR_OUT_OF_MEMORY;
 
   nsresult rv = nsSSLIOLayerAddToSocket(family, host, port, proxy,
-                                        sock, info, forSTARTTLS, flags);
+                                        firstPartyDomain, sock, info,
+                                        forSTARTTLS, flags);
   if (NS_FAILED(rv)) {
     PR_Close(sock);
     return rv;
@@ -2437,10 +2439,6 @@ nsSSLIOLayerImportFD(PRFileDesc* fd,
     goto loser;
   }
 
-  // This is an optimization to make sure the identity info dataset is parsed
-  // and loaded on a separate thread and can be overlapped with network latency.
-  EnsureServerVerificationInitialized();
-
   return sslSock;
 loser:
   if (sslSock) {
@@ -2514,7 +2512,7 @@ nsSSLIOLayerSetOptions(PRFileDesc* fd, bool forSTARTTLS,
   }
   // This ensures that we send key shares for X25519 and P-256 in TLS 1.3, so
   // that servers are less likely to use HelloRetryRequest.
-  if (SECSuccess != SSL_SendAdditionalKeyShares(fd, 2)) {
+  if (SECSuccess != SSL_SendAdditionalKeyShares(fd, 1)) {
     return NS_ERROR_FAILURE;
   }
 
@@ -2561,6 +2559,7 @@ nsSSLIOLayerAddToSocket(int32_t family,
                         const char* host,
                         int32_t port,
                         nsIProxyInfo* proxy,
+                        const nsACString& firstPartyDomain,
                         PRFileDesc* fd,
                         nsISupports** info,
                         bool forSTARTTLS,
@@ -2581,6 +2580,7 @@ nsSSLIOLayerAddToSocket(int32_t family,
   infoObject->SetForSTARTTLS(forSTARTTLS);
   infoObject->SetHostName(host);
   infoObject->SetPort(port);
+  infoObject->SetFirstPartyDomain(firstPartyDomain);
 
   bool haveProxy = false;
   if (proxy) {

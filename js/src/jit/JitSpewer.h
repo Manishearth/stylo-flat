@@ -44,6 +44,10 @@ namespace jit {
     _(Unrolling)                            \
     /* Information during LICM */           \
     _(LICM)                                 \
+    /* Info about fold linear constants */  \
+    _(FLAC)                                 \
+    /* Effective address analysis info */   \
+    _(EAA)                                  \
     /* Information during regalloc */       \
     _(RegAlloc)                             \
     /* Information during inlining */       \
@@ -168,9 +172,9 @@ class JitSpewIndent
     ~JitSpewIndent();
 };
 
-void JitSpew(JitSpewChannel channel, const char* fmt, ...);
-void JitSpewStart(JitSpewChannel channel, const char* fmt, ...);
-void JitSpewCont(JitSpewChannel channel, const char* fmt, ...);
+void JitSpew(JitSpewChannel channel, const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
+void JitSpewStart(JitSpewChannel channel, const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
+void JitSpewCont(JitSpewChannel channel, const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
 void JitSpewFin(JitSpewChannel channel);
 void JitSpewHeader(JitSpewChannel channel);
 bool JitSpewEnabled(JitSpewChannel channel);

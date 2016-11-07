@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-////////////////////////////////////////////////////////////////////////////////
-//// StarUI
+// //////////////////////////////////////////////////////////////////////////////
+// // StarUI
 
 var StarUI = {
   _itemId: -1,
@@ -122,7 +122,7 @@ var StarUI = {
             if (aEvent.target.classList.contains("expander-up") ||
                 aEvent.target.classList.contains("expander-down") ||
                 aEvent.target.id == "editBMPanel_newFolderButton")  {
-              //XXX Why is this necessary? The defaultPrevented check should
+              // XXX Why is this necessary? The defaultPrevented check should
               //    be enough.
               break;
             }
@@ -345,8 +345,8 @@ var StarUI = {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// PlacesCommandHook
+// //////////////////////////////////////////////////////////////////////////////
+// // PlacesCommandHook
 
 var PlacesCommandHook = {
   /**
@@ -672,8 +672,8 @@ var PlacesCommandHook = {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// HistoryMenu
+// //////////////////////////////////////////////////////////////////////////////
+// // HistoryMenu
 
 XPCOMUtils.defineLazyModuleGetter(this, "RecentlyClosedTabsAndWindowsMenuUtils",
   "resource:///modules/sessionstore/RecentlyClosedTabsAndWindowsMenuUtils.jsm");
@@ -752,9 +752,6 @@ HistoryMenu.prototype = {
   populateUndoWindowSubmenu: function PHM_populateUndoWindowSubmenu() {
     let undoMenu = this._rootElt.getElementsByClassName("recentlyClosedWindowsMenu")[0];
     let undoPopup = undoMenu.firstChild;
-    let menuLabelString = gNavigatorBundle.getString("menuUndoCloseWindowLabel");
-    let menuLabelStringSingleTab =
-      gNavigatorBundle.getString("menuUndoCloseWindowSingleTabLabel");
 
     // remove existing menu items
     while (undoPopup.hasChildNodes())
@@ -811,8 +808,8 @@ HistoryMenu.prototype = {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// BookmarksEventHandler
+// //////////////////////////////////////////////////////////////////////////////
+// // BookmarksEventHandler
 
 /**
  * Functions for handling events in the Bookmarks Toolbar and menu.
@@ -845,7 +842,7 @@ var BookmarksEventHandler = {
     // If this event bubbled up from a menu or menuitem, close the menus.
     // Do this before opening tabs, to avoid hiding the open tabs confirm-dialog.
     if (target.localName == "menu" || target.localName == "menuitem") {
-      for (node = target.parentNode; node; node = node.parentNode) {
+      for (let node = target.parentNode; node; node = node.parentNode) {
         if (node.localName == "menupopup")
           node.hidePopup();
         else if (node.localName != "menu" &&
@@ -940,8 +937,8 @@ var BookmarksEventHandler = {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// PlacesMenuDNDHandler
+// //////////////////////////////////////////////////////////////////////////////
+// // PlacesMenuDNDHandler
 
 // Handles special drag and drop functionality for Places menus that are not
 // part of a Places view (e.g. the bookmarks menu in the menubar).
@@ -1071,8 +1068,8 @@ var PlacesMenuDNDHandler = {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// PlacesToolbarHelper
+// //////////////////////////////////////////////////////////////////////////////
+// // PlacesToolbarHelper
 
 /**
  * This object handles the initialization and uninitialization of the bookmarks
@@ -1218,8 +1215,8 @@ var PlacesToolbarHelper = {
   },
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// BookmarkingUI
+// //////////////////////////////////////////////////////////////////////////////
+// // BookmarkingUI
 
 /**
  * Handles the bookmarks menu-button in the toolbar.
@@ -1417,9 +1414,18 @@ var BookmarkingUI = {
 
     let updatePlacesContextMenu = (shouldHidePrefUI = false) => {
       let prefEnabled = !shouldHidePrefUI && Services.prefs.getBoolPref(this.RECENTLY_BOOKMARKED_PREF);
-      document.getElementById("placesContext_showRecentlyBookmarked").hidden = shouldHidePrefUI || prefEnabled;
-      document.getElementById("placesContext_hideRecentlyBookmarked").hidden = shouldHidePrefUI || !prefEnabled;
-      document.getElementById("placesContext_recentlyBookmarkedSeparator").hidden = shouldHidePrefUI;
+      let showItem = document.getElementById("placesContext_showRecentlyBookmarked");
+      let hideItem = document.getElementById("placesContext_hideRecentlyBookmarked");
+      let separator = document.getElementById("placesContext_recentlyBookmarkedSeparator");
+      showItem.hidden = shouldHidePrefUI || prefEnabled;
+      hideItem.hidden = shouldHidePrefUI || !prefEnabled;
+      separator.hidden = shouldHidePrefUI;
+      if (!shouldHidePrefUI) {
+        // Move to the bottom of the menu.
+        separator.parentNode.appendChild(separator);
+        showItem.parentNode.appendChild(showItem);
+        hideItem.parentNode.appendChild(hideItem);
+      }
     };
 
     let onPlacesContextMenuShowing = event => {
@@ -1992,4 +1998,3 @@ var AutoShowBookmarksToolbar = {
     setToolbarVisibility(toolbar, true);
   }
 };
-

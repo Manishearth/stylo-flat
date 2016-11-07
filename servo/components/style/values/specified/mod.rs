@@ -6,7 +6,7 @@ use app_units::Au;
 use cssparser::{self, Parser, ToCss, Token};
 use euclid::size::Size2D;
 #[cfg(feature = "gecko")]
-use gecko_bindings::ptr::{GeckoArcPrincipal, GeckoArcURI};
+use gecko_bindings::sugar::refptr::{GeckoArcPrincipal, GeckoArcURI};
 use parser::{Parse, ParserContext};
 #[cfg(feature = "gecko")]
 use parser::ParserContextExtraData;
@@ -18,6 +18,7 @@ use std::ops::Mul;
 use style_traits::values::specified::AllowedNumericType;
 use super::{CSSFloat, FONT_MEDIUM_PX, HasViewportPercentage, LocalToCss, NoViewportPercentage};
 use super::computed::{self, ComputedValueAsSpecified, Context, ToComputedValue};
+use url::Url;
 
 pub use self::image::{AngleOrCorner, ColorStop, EndingShape as GradientEndingShape, Gradient};
 pub use self::image::{GradientKind, HorizontalDirection, Image, LengthOrKeyword, LengthOrPercentageOrKeyword};
@@ -1303,6 +1304,75 @@ pub fn parse_border_width(input: &mut Parser) -> Result<Length, ()> {
     })
 }
 
+#[derive(Clone, PartialEq, Copy, Debug)]
+#[cfg_attr(feature = "servo", derive(HeapSizeOf))]
+pub enum BorderWidth {
+    Thin,
+    Medium,
+    Thick,
+    Width(Length),
+}
+
+impl BorderWidth {
+    pub fn from_length(length: Length) -> Self {
+        BorderWidth::Width(length)
+    }
+
+    pub fn parse(input: &mut Parser) -> Result<BorderWidth, ()> {
+        match input.try(Length::parse_non_negative) {
+            Ok(length) => Ok(BorderWidth::Width(length)),
+            Err(_) => match_ignore_ascii_case! { try!(input.expect_ident()),
+               "thin" => Ok(BorderWidth::Thin),
+               "medium" => Ok(BorderWidth::Medium),
+               "thick" => Ok(BorderWidth::Thick),
+               _ => Err(())
+            }
+        }
+    }
+}
+
+impl ToCss for BorderWidth {
+    fn to_css<W>(&self, dest: &mut W) -> fmt::Result where W: fmt::Write {
+        match *self {
+            BorderWidth::Thin => dest.write_str("thin"),
+            BorderWidth::Medium => dest.write_str("medium"),
+            BorderWidth::Thick => dest.write_str("thick"),
+            BorderWidth::Width(length) => length.to_css(dest)
+        }
+    }
+}
+
+impl HasViewportPercentage for BorderWidth {
+    fn has_viewport_percentage(&self) -> bool {
+        match *self {
+            BorderWidth::Thin | BorderWidth::Medium | BorderWidth::Thick => false,
+            BorderWidth::Width(length) => length.has_viewport_percentage()
+         }
+    }
+}
+
+impl ToComputedValue for BorderWidth {
+    type ComputedValue = Au;
+
+    #[inline]
+    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+        // We choose the pixel length of the keyword values the same as both spec and gecko.
+        // Spec: https://drafts.csswg.org/css-backgrounds-3/#line-width
+        // Gecko: https://bugzilla.mozilla.org/show_bug.cgi?id=1312155#c0
+        match *self {
+            BorderWidth::Thin => Length::from_px(1.).to_computed_value(context),
+            BorderWidth::Medium => Length::from_px(3.).to_computed_value(context),
+            BorderWidth::Thick => Length::from_px(5.).to_computed_value(context),
+            BorderWidth::Width(length) => length.to_computed_value(context)
+        }
+    }
+
+    #[inline]
+    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
+        BorderWidth::Width(ToComputedValue::from_computed_value(computed))
+    }
+}
+
 // The integer values here correspond to the border conflict resolution rules in CSS 2.1 §
 // 17.6.2.1. Higher values override lower values.
 define_numbered_css_keyword_enum! { BorderStyle:
@@ -1450,5 +1520,51 @@ impl ToComputedValue for Opacity {
 impl ToCss for Opacity {
     fn to_css<W>(&self, dest: &mut W) -> fmt::Result where W: fmt::Write {
         self.0.to_css(dest)
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+#[cfg_attr(feature = "servo", derive(HeapSizeOf))]
+pub enum UrlOrNone {
+    Url(Url, UrlExtraData),
+    None,
+}
+
+impl ComputedValueAsSpecified for UrlOrNone {}
+impl NoViewportPercentage for UrlOrNone {}
+
+impl ToCss for UrlOrNone {
+    fn to_css<W>(&self, dest: &mut W) -> fmt::Result where W: fmt::Write {
+        use values::LocalToCss;
+        match *self {
+            UrlOrNone::Url(ref url, _) => {
+                url.to_css(dest)
+            }
+            UrlOrNone::None => {
+                try!(dest.write_str("none"));
+                Ok(())
+            }
+        }
+    }
+}
+
+impl UrlOrNone {
+    pub fn parse(context: &ParserContext, input: &mut Parser) -> Result<UrlOrNone, ()> {
+        if input.try(|input| input.expect_ident_matching("none")).is_ok() {
+            return Ok(UrlOrNone::None);
+        }
+
+        let url = context.parse_url(&*try!(input.expect_url()));
+        match UrlExtraData::make_from(context) {
+            Some(extra_data) => {
+                Ok(UrlOrNone::Url(url, extra_data))
+            },
+            _ => {
+                // FIXME(heycam) should ensure we always have a principal, etc., when parsing
+                // style attributes and re-parsing due to CSS Variables.
+                println!("stylo: skipping UrlOrNone declaration without ParserContextExtraData");
+                Err(())
+            },
+        }
     }
 }

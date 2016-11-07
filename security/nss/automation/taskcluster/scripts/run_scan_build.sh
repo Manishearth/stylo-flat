@@ -3,10 +3,6 @@
 source $(dirname $0)/tools.sh
 
 if [ $(id -u) = 0 ]; then
-
-    # Set compiler.
-    switch_compilers
-
     # Drop privileges by re-running this script.
     exec su worker $0 $@
 fi
@@ -24,8 +20,16 @@ make nss_build_all
 # key: directory to scan
 # value: number of errors expected in that directory
 declare -A scan=( \
-        [lib/ssl]=0 \
+        [lib/base]=0 \
+        [lib/certdb]=0 \
+        [lib/certhigh]=0 \
+        [lib/ckfw]=0 \
+        [lib/crmf]=0 \
+        [lib/cryptohi]=0 \
+        [lib/dev]=0 \
         [lib/freebl]=0 \
+        [lib/nss]=0 \
+        [lib/ssl]=0 \
         [lib/util]=0 \
     )
 
@@ -35,7 +39,7 @@ for i in "${!scan[@]}"; do
 done
 
 # run scan-build (only building affected directories)
-scan-build -o /home/worker/artifacts make nss_build_all && cd ..
+scan-build -o /home/worker/artifacts --use-cc=$CC --use-c++=$CCC make nss_build_all && cd ..
 
 # print errors we found
 set +v +x

@@ -59,64 +59,6 @@ enum PrintOperatorPrecedence
     GroupPrecedence = 16,
 };
 
-// StringBuffer wrapper to track the position (line and column) within the generated
-// source.
-class WasmPrintBuffer
-{
-    StringBuffer& stringBuffer_;
-    uint32_t lineno_;
-    uint32_t column_;
-
-  public:
-    explicit WasmPrintBuffer(StringBuffer& stringBuffer) : stringBuffer_(stringBuffer), lineno_(1), column_(1) {}
-    inline char processChar(char ch) {
-        if (ch == '\n') {
-            lineno_++; column_ = 1;
-        } else
-            column_++;
-        return ch;
-    }
-    inline char16_t processChar(char16_t ch) {
-        if (ch == '\n') {
-            lineno_++; column_ = 1;
-        } else
-            column_++;
-        return ch;
-    }
-    bool append(const char ch) {
-        return stringBuffer_.append(processChar(ch));
-    }
-    bool append(const char16_t ch) {
-        return stringBuffer_.append(processChar(ch));
-    }
-    bool append(const char* str, size_t length) {
-        for (size_t i = 0; i < length; i++)
-            processChar(str[i]);
-        return stringBuffer_.append(str, length);
-    }
-    bool append(const char16_t* begin, const char16_t* end) {
-        for (const char16_t* p = begin; p != end; p++)
-            processChar(*p);
-        return stringBuffer_.append(begin, end);
-    }
-    bool append(const char16_t* str, size_t length) {
-        return append(str, str + length);
-    }
-    template <size_t ArrayLength>
-    bool append(const char (&array)[ArrayLength]) {
-        return append(array, ArrayLength - 1);
-    }
-    char16_t getChar(size_t index) {
-        return stringBuffer_.getChar(index);
-    }
-    size_t length() {
-        return stringBuffer_.length();
-    }
-    StringBuffer& stringBuffer() { return stringBuffer_; }
-    uint32_t lineno() { return lineno_; }
-    uint32_t column() { return column_; }
-};
-
 struct WasmPrintContext
 {
     JSContext* cx;
@@ -375,19 +317,6 @@ PrintBlockLevelExpr(WasmPrintContext& c, AstExpr& expr, bool isLast)
 // binary format parsing and rendering
 
 static bool
-PrintNullaryOperator(WasmPrintContext& c, AstNullaryOperator& op)
-{
-    const char* opStr;
-
-    switch (op.expr()) {
-        case Expr::CurrentMemory:   opStr = "curent_memory"; break;
-        default:  return false;
-    }
-
-    return c.buffer.append(opStr, strlen(opStr));
-}
-
-static bool
 PrintNop(WasmPrintContext& c)
 {
     return c.buffer.append("nop");
@@ -436,9 +365,6 @@ PrintCall(WasmPrintContext& c, AstCall& call)
 {
     if (call.expr() == Expr::Call) {
         if (!c.buffer.append("call "))
-            return false;
-    } else if (call.expr() == Expr::CallImport) {
-        if (!c.buffer.append("call_import "))
             return false;
     } else {
         return false;
@@ -715,7 +641,6 @@ PrintUnaryOperator(WasmPrintContext& c, AstUnaryOperator& op)
       case Expr::F64Ceil:    opStr = "f64.ceil"; break;
       case Expr::F64Floor:   opStr = "f64.floor"; break;
       case Expr::F64Sqrt:    opStr = "f64.sqrt"; break;
-      case Expr::GrowMemory: opStr = "grow_memory"; break;
       default: return false;
     }
 
@@ -1423,6 +1348,31 @@ PrintFirst(WasmPrintContext& c, AstFirst& first)
 }
 
 static bool
+PrintCurrentMemory(WasmPrintContext& c, AstCurrentMemory& cm)
+{
+    return c.buffer.append("current_memory");
+}
+
+static bool
+PrintGrowMemory(WasmPrintContext& c, AstGrowMemory& gm)
+{
+    if (!c.buffer.append("grow_memory("))
+        return false;
+
+    PrintOperatorPrecedence lastPrecedence = c.currentPrecedence;
+    c.currentPrecedence = ExpressionPrecedence;
+
+    if (!PrintExpr(c, *gm.op()))
+        return false;
+
+    if (!c.buffer.append(")"))
+        return false;
+
+    c.currentPrecedence = lastPrecedence;
+    return true;
+}
+
+static bool
 PrintExpr(WasmPrintContext& c, AstExpr& expr)
 {
     if (c.maybeSourceMap) {
@@ -1437,8 +1387,6 @@ PrintExpr(WasmPrintContext& c, AstExpr& expr)
         return PrintNop(c);
       case AstExprKind::Drop:
         return PrintDrop(c, expr.as<AstDrop>());
-      case AstExprKind::NullaryOperator:
-        return PrintNullaryOperator(c, expr.as<AstNullaryOperator>());
       case AstExprKind::Unreachable:
         return PrintUnreachable(c, expr.as<AstUnreachable>());
       case AstExprKind::Call:
@@ -1479,6 +1427,10 @@ PrintExpr(WasmPrintContext& c, AstExpr& expr)
         return PrintReturn(c, expr.as<AstReturn>());
       case AstExprKind::First:
         return PrintFirst(c, expr.as<AstFirst>());
+      case AstExprKind::CurrentMemory:
+        return PrintCurrentMemory(c, expr.as<AstCurrentMemory>());
+      case AstExprKind::GrowMemory:
+        return PrintGrowMemory(c, expr.as<AstGrowMemory>());
       default:
         // Note: it's important not to remove this default since readExpr()
         // can return Expr values for which there is no enumerator.
@@ -1805,23 +1757,29 @@ PrintCodeSection(WasmPrintContext& c, const AstModule::FuncVector& funcs, const 
    return true;
 }
 
-
 static bool
 PrintDataSection(WasmPrintContext& c, const AstModule& module)
 {
     if (!module.hasMemory())
         return true;
 
+    MOZ_ASSERT(module.memories().length() == 1, "NYI: several memories");
+
     if (!PrintIndent(c))
         return false;
     if (!c.buffer.append("memory "))
         return false;
-    if (!PrintInt32(c, module.memory().initial))
-       return false;
-    if (module.memory().maximum) {
+
+    const Limits& memory = module.memories()[0].limits;
+    MOZ_ASSERT(memory.initial % PageSize == 0);
+    if (!PrintInt32(c, memory.initial / PageSize))
+        return false;
+
+    if (memory.maximum) {
+        MOZ_ASSERT(*memory.maximum % PageSize == 0);
         if (!c.buffer.append(", "))
             return false;
-        if (!PrintInt32(c, *module.memory().maximum))
+        if (!PrintInt32(c, *memory.maximum / PageSize))
             return false;
     }
 
@@ -1829,29 +1787,41 @@ PrintDataSection(WasmPrintContext& c, const AstModule& module)
 
     uint32_t numSegments = module.dataSegments().length();
     if (!numSegments) {
-      if (!c.buffer.append(" {}\n\n"))
-          return false;
-      return true;
+        if (!c.buffer.append(" {}\n\n"))
+            return false;
+        return true;
     }
     if (!c.buffer.append(" {\n"))
         return false;
 
     for (uint32_t i = 0; i < numSegments; i++) {
         const AstDataSegment* segment = module.dataSegments()[i];
-
         if (!PrintIndent(c))
             return false;
         if (!c.buffer.append("segment "))
-           return false;
+            return false;
         if (!PrintInt32(c, segment->offset()->as<AstConst>().val().i32()))
-           return false;
-        if (!c.buffer.append(" \""))
-           return false;
+            return false;
+        if (!c.buffer.append("\n"))
+            return false;
 
-        PrintEscapedString(c, segment->text());
+        c.indent++;
+        for (const AstName& fragment : segment->fragments()) {
+            if (!PrintIndent(c))
+                return false;
+            if (!c.buffer.append("\""))
+                return false;
+            if (!PrintEscapedString(c, fragment))
+                return false;
+            if (!c.buffer.append("\"\n"))
+                return false;
+        }
+        c.indent--;
 
-        if (!c.buffer.append("\";\n"))
-           return false;
+        if (!PrintIndent(c))
+            return false;
+        if (!c.buffer.append(";\n"))
+            return false;
     }
 
     c.indent--;

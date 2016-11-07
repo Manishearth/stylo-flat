@@ -15,6 +15,7 @@
 #include "mozilla/FloatingPoint.h" // For IsFinite
 #include "mozilla/LookAndFeel.h" // For LookAndFeel::GetInt
 #include "mozilla/KeyframeUtils.h"
+#include "mozilla/ServoBindings.h"
 #include "mozilla/StyleAnimationValue.h"
 #include "Layers.h" // For Layer
 #include "nsComputedDOMStyle.h" // nsComputedDOMStyle::GetStyleContextForElement
@@ -26,6 +27,23 @@
 #include "nsIScriptError.h"
 
 namespace mozilla {
+
+bool
+PropertyValuePair::operator==(const PropertyValuePair& aOther) const
+{
+  if (mProperty != aOther.mProperty || mValue != aOther.mValue) {
+    return false;
+  }
+  if (mServoDeclarationBlock == aOther.mServoDeclarationBlock) {
+    return true;
+  }
+  if (!mServoDeclarationBlock || !aOther.mServoDeclarationBlock) {
+    return false;
+  }
+  return Servo_DeclarationBlock_Equals(mServoDeclarationBlock,
+                                       aOther.mServoDeclarationBlock);
+}
+
 namespace dom {
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(KeyframeEffectReadOnly,
@@ -192,12 +210,9 @@ KeyframeEffectReadOnly::SetKeyframes(nsTArray<Keyframe>&& aKeyframes,
 }
 
 const AnimationProperty*
-KeyframeEffectReadOnly::GetAnimationOfProperty(nsCSSPropertyID aProperty) const
+KeyframeEffectReadOnly::GetEffectiveAnimationOfProperty(
+  nsCSSPropertyID aProperty) const
 {
-  if (!IsInEffect()) {
-    return nullptr;
-  }
-
   EffectSet* effectSet =
     EffectSet::GetEffectSet(mTarget->mElement, mTarget->mPseudoType);
   for (size_t propIdx = 0, propEnd = mProperties.Length();
@@ -217,6 +232,17 @@ KeyframeEffectReadOnly::GetAnimationOfProperty(nsCSSPropertyID aProperty) const
     }
   }
   return nullptr;
+}
+
+bool
+KeyframeEffectReadOnly::HasAnimationOfProperty(nsCSSPropertyID aProperty) const
+{
+  for (const AnimationProperty& property : mProperties) {
+    if (property.mProperty == aProperty) {
+      return true;
+    }
+  }
+  return false;
 }
 
 #ifdef DEBUG
@@ -265,7 +291,7 @@ KeyframeEffectReadOnly::UpdateProperties(nsStyleContext* aStyleContext)
     if (mEffectOptions.mSpacingMode == SpacingMode::paced) {
       KeyframeUtils::ApplySpacing(keyframesCopy, SpacingMode::paced,
                                   mEffectOptions.mPacedProperty,
-                                  computedValues);
+                                  computedValues, aStyleContext);
     }
 
     properties =
@@ -926,10 +952,12 @@ KeyframeEffectReadOnly::CanThrottle() const
   // already running on compositor.
   for (const LayerAnimationInfo::Record& record :
         LayerAnimationInfo::sRecords) {
-    // Skip properties that are overridden in the cascade.
-    // (GetAnimationOfProperty, as called by HasAnimationOfProperty,
-    // only returns an animation if it currently wins in the cascade.)
-    if (!HasAnimationOfProperty(record.mProperty)) {
+    // Skip properties that are overridden by !important rules.
+    // (GetEffectiveAnimationOfProperty, as called by
+    // HasEffectiveAnimationOfProperty, only returns a property which is
+    // neither overridden by !important rules nor overridden by other
+    // animation.)
+    if (!HasEffectiveAnimationOfProperty(record.mProperty)) {
       continue;
     }
 
@@ -1124,17 +1152,11 @@ KeyframeEffectReadOnly::ShouldBlockAsyncTransformAnimations(
   const nsIFrame* aFrame,
   AnimationPerformanceWarning::Type& aPerformanceWarning) const
 {
-  // We currently only expect this method to be called when this effect
-  // is attached to a playing Animation. If that ever changes we'll need
-  // to update this to only return true when that is the case since paused,
-  // filling, cancelled Animations etc. shouldn't stop other Animations from
+  // We currently only expect this method to be called for effects whose
+  // animations are eligible for the compositor since, Animations that are
+  // paused, zero-duration, finished etc. should not block other animations from
   // running on the compositor.
-  MOZ_ASSERT(mAnimation && mAnimation->IsPlaying());
-
-  // Should not block other animations if this effect is not in-effect.
-  if (!IsInEffect()) {
-    return false;
-  }
+  MOZ_ASSERT(mAnimation && mAnimation->IsPlayableOnCompositor());
 
   EffectSet* effectSet =
     EffectSet::GetEffectSet(mTarget->mElement, mTarget->mPseudoType);

@@ -27,7 +27,7 @@ XPCOMUtils.defineLazyGetter(this, "log", () => {
   return new ConsoleAPI(consoleOptions);
 });
 
-let Screenshot = {
+this.Screenshot = {
   _extensionPath: null,
   _path: null,
   _imagePrefix: "",
@@ -73,7 +73,7 @@ let Screenshot = {
     });
   },
 
-  ///// helpers /////
+  // /// helpers /////
 
   _screenshotWindows(filename) {
     return new Promise((resolve, reject) => {

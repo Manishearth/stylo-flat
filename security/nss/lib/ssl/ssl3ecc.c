@@ -194,7 +194,8 @@ ssl3_SendECDHClientKeyExchange(sslSocket *ss, SECKEYPublicKey *svrPubKey)
         PORT_SetError(SEC_ERROR_BAD_KEY);
         goto loser;
     }
-    rv = ssl_CreateECDHEphemeralKeyPair(groupDef, &keyPair);
+    ss->sec.keaGroup = groupDef;
+    rv = ssl_CreateECDHEphemeralKeyPair(ss, groupDef, &keyPair);
     if (rv != SECSuccess) {
         ssl_MapLowLevelError(SEC_ERROR_KEYGEN_FAIL);
         goto loser;
@@ -347,6 +348,7 @@ ssl3_HandleECDHClientKeyExchange(sslSocket *ss, SSL3Opaque *b,
         /* error code set by ssl3_InitPendingCipherSpec */
         return SECFailure;
     }
+    ss->sec.keaGroup = ssl_ECPubKey2NamedGroup(&clntPubKey);
     return SECSuccess;
 }
 
@@ -471,7 +473,8 @@ ssl_GetECGroupForServerSocket(sslSocket *ss)
 
 /* Create an ECDHE key pair for a given curve */
 SECStatus
-ssl_CreateECDHEphemeralKeyPair(const sslNamedGroupDef *ecGroup,
+ssl_CreateECDHEphemeralKeyPair(const sslSocket *ss,
+                               const sslNamedGroupDef *ecGroup,
                                sslEphemeralKeyPair **keyPair)
 {
     SECKEYPrivateKey *privKey = NULL;
@@ -482,7 +485,7 @@ ssl_CreateECDHEphemeralKeyPair(const sslNamedGroupDef *ecGroup,
     if (ssl_NamedGroup2ECParams(NULL, ecGroup, &ecParams) != SECSuccess) {
         return SECFailure;
     }
-    privKey = SECKEY_CreateECPrivateKey(&ecParams, &pubKey, NULL);
+    privKey = SECKEY_CreateECPrivateKey(&ecParams, &pubKey, ss->pkcs11PinArg);
     SECITEM_FreeItem(&ecParams, PR_FALSE);
 
     if (!privKey || !pubKey ||
@@ -498,6 +501,23 @@ ssl_CreateECDHEphemeralKeyPair(const sslNamedGroupDef *ecGroup,
     }
 
     *keyPair = pair;
+    SSL_TRC(50, ("%d: SSL[%d]: Create ECDH ephemeral key %d",
+                 SSL_GETPID(), ss ? ss->fd : NULL, ecGroup->name));
+    PRINT_BUF(50, (ss, "Public Key", pubKey->u.ec.publicValue.data,
+                   pubKey->u.ec.publicValue.len));
+#ifdef TRACE
+    if (ssl_trace >= 50) {
+        SECItem d = { siBuffer, NULL, 0 };
+        SECStatus rv = PK11_ReadRawAttribute(PK11_TypePrivKey, privKey,
+                                             CKA_VALUE, &d);
+        if (rv == SECSuccess) {
+            PRINT_BUF(50, (ss, "Private Key", d.data, d.len));
+            SECITEM_FreeItem(&d, PR_FALSE);
+        } else {
+            SSL_TRC(50, ("Error extracting private key"));
+        }
+    }
+#endif
     return SECSuccess;
 }
 
@@ -685,7 +705,7 @@ ssl3_SendECDHServerKeyExchange(sslSocket *ss)
         }
         keyPair = (sslEphemeralKeyPair *)PR_NEXT_LINK(&ss->ephemeralKeyPairs);
     } else {
-        rv = ssl_CreateECDHEphemeralKeyPair(ecGroup, &keyPair);
+        rv = ssl_CreateECDHEphemeralKeyPair(ss, ecGroup, &keyPair);
         if (rv != SECSuccess) {
             goto loser;
         }
@@ -1078,7 +1098,8 @@ ssl_UpdateSupportedGroups(sslSocket *ss, SECItem *data)
 
     /* Note: if ss->opt.requireDHENamedGroups is set, we disable DHE cipher
      * suites, but we do that in ssl3_config_match(). */
-    if (!ss->opt.requireDHENamedGroups && !ss->ssl3.hs.peerSupportsFfdheGroups) {
+    if (ss->version < SSL_LIBRARY_VERSION_TLS_1_3 &&
+        !ss->opt.requireDHENamedGroups && !ss->ssl3.hs.peerSupportsFfdheGroups) {
         /* If we don't require that DHE use named groups, and no FFDHE was
          * included, we pretend that they support all the FFDHE groups we do. */
         for (i = 0; i < SSL_NAMED_GROUP_COUNT; ++i) {

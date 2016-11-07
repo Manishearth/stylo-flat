@@ -162,6 +162,7 @@ static const nsAttrValue::EnumTable kInputTypeTable[] = {
   { "checkbox", NS_FORM_INPUT_CHECKBOX },
   { "color", NS_FORM_INPUT_COLOR },
   { "date", NS_FORM_INPUT_DATE },
+  { "datetime-local", NS_FORM_INPUT_DATETIME_LOCAL },
   { "email", NS_FORM_INPUT_EMAIL },
   { "file", NS_FORM_INPUT_FILE },
   { "hidden", NS_FORM_INPUT_HIDDEN },
@@ -183,7 +184,7 @@ static const nsAttrValue::EnumTable kInputTypeTable[] = {
 };
 
 // Default type is 'text'.
-static const nsAttrValue::EnumTable* kInputDefaultType = &kInputTypeTable[17];
+static const nsAttrValue::EnumTable* kInputDefaultType = &kInputTypeTable[18];
 
 static const uint8_t NS_INPUT_INPUTMODE_AUTO              = 0;
 static const uint8_t NS_INPUT_INPUTMODE_NUMERIC           = 1;
@@ -211,7 +212,9 @@ const Decimal HTMLInputElement::kStepScaleFactorDate = Decimal(86400000);
 const Decimal HTMLInputElement::kStepScaleFactorNumberRange = Decimal(1);
 const Decimal HTMLInputElement::kStepScaleFactorTime = Decimal(1000);
 const Decimal HTMLInputElement::kStepScaleFactorMonth = Decimal(1);
+const Decimal HTMLInputElement::kStepScaleFactorWeek = Decimal(7 * 86400000);
 const Decimal HTMLInputElement::kDefaultStepBase = Decimal(0);
+const Decimal HTMLInputElement::kDefaultStepBaseWeek = Decimal(-259200000);
 const Decimal HTMLInputElement::kDefaultStep = Decimal(1);
 const Decimal HTMLInputElement::kDefaultStepTime = Decimal(60);
 const Decimal HTMLInputElement::kStepAny = Decimal(0);
@@ -1160,7 +1163,7 @@ static nsresult FireEventForAccessibility(nsIDOMHTMLInputElement* aTarget,
 //
 
 HTMLInputElement::HTMLInputElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
-                                   FromParser aFromParser)
+                                   FromParser aFromParser, FromClone aFromClone)
   : nsGenericHTMLFormElementWithState(aNodeInfo)
   , mType(kInputDefaultType->value)
   , mAutocompleteAttrState(nsContentUtils::eAutocompleteAttrState_Unknown)
@@ -1171,7 +1174,8 @@ HTMLInputElement::HTMLInputElement(already_AddRefed<mozilla::dom::NodeInfo>& aNo
   , mChecked(false)
   , mHandlingSelectEvent(false)
   , mShouldInitChecked(false)
-  , mParserCreating(aFromParser != NOT_FROM_PARSER)
+  , mDoneCreating(aFromParser == NOT_FROM_PARSER &&
+                  aFromClone == FromClone::no)
   , mInInternalActivate(false)
   , mCheckedIsToggled(false)
   , mIndeterminate(false)
@@ -1306,7 +1310,8 @@ HTMLInputElement::Clone(mozilla::dom::NodeInfo* aNodeInfo, nsINode** aResult) co
   *aResult = nullptr;
 
   already_AddRefed<mozilla::dom::NodeInfo> ni = RefPtr<mozilla::dom::NodeInfo>(aNodeInfo).forget();
-  RefPtr<HTMLInputElement> it = new HTMLInputElement(ni, NOT_FROM_PARSER);
+  RefPtr<HTMLInputElement> it = new HTMLInputElement(ni, NOT_FROM_PARSER,
+                                                     FromClone::yes);
 
   nsresult rv = const_cast<HTMLInputElement*>(this)->CopyInnerTo(it);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1348,6 +1353,8 @@ HTMLInputElement::Clone(mozilla::dom::NodeInfo* aNodeInfo, nsINode** aResult) co
       break;
   }
 
+  it->DoneCreatingElement();
+
   it->mLastValueChangeWasInteractive = mLastValueChangeWasInteractive;
   it.forget(aResult);
   return NS_OK;
@@ -1362,12 +1369,12 @@ HTMLInputElement::BeforeSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
     //
     // When name or type changes, radio should be removed from radio group.
     // (type changes are handled in the form itself currently)
-    // If the parser is not done creating the radio, we also should not do it.
+    // If we are not done creating the radio, we also should not do it.
     //
     if ((aName == nsGkAtoms::name ||
          (aName == nsGkAtoms::type && !mForm)) &&
         mType == NS_FORM_INPUT_RADIO &&
-        (mForm || !mParserCreating)) {
+        (mForm || mDoneCreating)) {
       WillRemoveFromRadioGroup();
     } else if (aNotify && aName == nsGkAtoms::src &&
                mType == NS_FORM_INPUT_IMAGE) {
@@ -1412,12 +1419,12 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
     //
     // When name or type changes, radio should be added to radio group.
     // (type changes are handled in the form itself currently)
-    // If the parser is not done creating the radio, we also should not do it.
+    // If we are not done creating the radio, we also should not do it.
     //
     if ((aName == nsGkAtoms::name ||
          (aName == nsGkAtoms::type && !mForm)) &&
         mType == NS_FORM_INPUT_RADIO &&
-        (mForm || !mParserCreating)) {
+        (mForm || mDoneCreating)) {
       AddedToRadioGroup();
       UpdateValueMissingValidityStateForRadio(false);
     }
@@ -1435,9 +1442,9 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
     // Checked must be set no matter what type of control it is, since
     // mChecked must reflect the new value
     if (aName == nsGkAtoms::checked && !mCheckedChanged) {
-      // Delay setting checked if the parser is creating this element (wait
+      // Delay setting checked if we are creating this element (wait
       // until everything is set)
-      if (mParserCreating) {
+      if (!mDoneCreating) {
         mShouldInitChecked = true;
       } else {
         DoSetChecked(DefaultChecked(), true, true);
@@ -1491,7 +1498,7 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       UpdateTooLongValidityState();
     } else if (MinOrMaxLengthApplies() && aName == nsGkAtoms::minlength) {
       UpdateTooShortValidityState();
-    } else if (aName == nsGkAtoms::pattern && !mParserCreating) {
+    } else if (aName == nsGkAtoms::pattern && mDoneCreating) {
       UpdatePatternMismatchValidityState();
     } else if (aName == nsGkAtoms::multiple) {
       UpdateTypeMismatchValidityState();
@@ -1517,10 +1524,10 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       }
       // Validity state must be updated *after* the SetValueInternal call above
       // or else the following assert will not be valid.
-      // We don't assert the state of underflow during parsing since
+      // We don't assert the state of underflow during creation since
       // DoneCreatingElement sanitizes.
       UpdateRangeOverflowValidityState();
-      MOZ_ASSERT(mParserCreating ||
+      MOZ_ASSERT(!mDoneCreating ||
                  mType != NS_FORM_INPUT_RANGE ||
                  !GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
                  "HTML5 spec does not allow underflow for type=range");
@@ -1537,7 +1544,7 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       // See corresponding @max comment
       UpdateRangeUnderflowValidityState();
       UpdateStepMismatchValidityState();
-      MOZ_ASSERT(mParserCreating ||
+      MOZ_ASSERT(!mDoneCreating ||
                  mType != NS_FORM_INPUT_RANGE ||
                  !GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
                  "HTML5 spec does not allow underflow for type=range");
@@ -1552,7 +1559,7 @@ HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       }
       // See corresponding @max comment
       UpdateStepMismatchValidityState();
-      MOZ_ASSERT(mParserCreating ||
+      MOZ_ASSERT(!mDoneCreating ||
                  mType != NS_FORM_INPUT_RANGE ||
                  !GetValidityState(VALIDITY_STATE_RANGE_UNDERFLOW),
                  "HTML5 spec does not allow underflow for type=range");
@@ -2201,7 +2208,8 @@ HTMLInputElement::ConvertNumberToString(Decimal aValue,
 Nullable<Date>
 HTMLInputElement::GetValueAsDate(ErrorResult& aRv)
 {
-  if (!IsDateTimeInputType(mType)) {
+  // TODO: this is temporary until bug 888331 is fixed.
+  if (!IsDateTimeInputType(mType) || mType == NS_FORM_INPUT_DATETIME_LOCAL) {
     return Nullable<Date>();
   }
 
@@ -2269,7 +2277,8 @@ HTMLInputElement::GetValueAsDate(ErrorResult& aRv)
 void
 HTMLInputElement::SetValueAsDate(Nullable<Date> aDate, ErrorResult& aRv)
 {
-  if (!IsDateTimeInputType(mType)) {
+  // TODO: this is temporary until bug 888331 is fixed.
+  if (!IsDateTimeInputType(mType) || mType == NS_FORM_INPUT_DATETIME_LOCAL) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
@@ -2381,6 +2390,7 @@ HTMLInputElement::GetStepBase() const
              mType == NS_FORM_INPUT_DATE ||
              mType == NS_FORM_INPUT_TIME ||
              mType == NS_FORM_INPUT_MONTH ||
+             mType == NS_FORM_INPUT_WEEK ||
              mType == NS_FORM_INPUT_RANGE,
              "Check that kDefaultStepBase is correct for this new type");
 
@@ -2399,6 +2409,10 @@ HTMLInputElement::GetStepBase() const
   if (GetAttr(kNameSpaceID_None, nsGkAtoms::value, valueStr) &&
       ConvertStringToNumber(valueStr, stepBase)) {
     return stepBase;
+  }
+
+  if (mType == NS_FORM_INPUT_WEEK) {
+    return kDefaultStepBaseWeek;
   }
 
   return kDefaultStepBase;
@@ -2520,7 +2534,8 @@ HTMLInputElement::IsDateTimeInputType(uint8_t aType)
   return aType == NS_FORM_INPUT_DATE ||
          aType == NS_FORM_INPUT_TIME ||
          aType == NS_FORM_INPUT_MONTH ||
-         aType == NS_FORM_INPUT_WEEK;
+         aType == NS_FORM_INPUT_WEEK ||
+         aType == NS_FORM_INPUT_DATETIME_LOCAL;
 }
 
 NS_IMETHODIMP
@@ -3238,10 +3253,10 @@ HTMLInputElement::SetValueInternal(const nsAString& aValue, uint32_t aFlags)
       // it if it's useless.
       nsAutoString value(aValue);
 
-      if (!mParserCreating) {
+      if (mDoneCreating) {
         SanitizeValue(value);
       }
-      // else DoneCreatingElement calls us again once mParserCreating is false
+      // else DoneCreatingElement calls us again once mDoneCreating is true
 
       bool setValueChanged = !!(aFlags & nsTextEditorState::eSetValue_Notify);
       if (setValueChanged) {
@@ -3253,7 +3268,7 @@ HTMLInputElement::SetValueInternal(const nsAString& aValue, uint32_t aFlags)
           return NS_ERROR_OUT_OF_MEMORY;
         }
         if (mType == NS_FORM_INPUT_EMAIL) {
-          UpdateAllValidityStates(mParserCreating);
+          UpdateAllValidityStates(!mDoneCreating);
         }
       } else {
         free(mInputData.mValue);
@@ -3281,11 +3296,11 @@ HTMLInputElement::SetValueInternal(const nsAString& aValue, uint32_t aFlags)
             frame->UpdateInputBoxValue();
           }
         }
-        if (!mParserCreating) {
+        if (mDoneCreating) {
           OnValueChanged(/* aNotify = */ true,
                          /* aWasInteractiveUserChange = */ false);
         }
-        // else DoneCreatingElement calls us again once mParserCreating is false
+        // else DoneCreatingElement calls us again once mDoneCreating is true
       }
 
       if (mType == NS_FORM_INPUT_COLOR) {
@@ -3662,6 +3677,12 @@ HTMLInputElement::IsInteractiveHTMLContent(bool aIgnoreTabindex) const
 {
   return mType != NS_FORM_INPUT_HIDDEN ||
          nsGenericHTMLFormElementWithState::IsInteractiveHTMLContent(aIgnoreTabindex);
+}
+
+void
+HTMLInputElement::AsyncEventRunning(AsyncEventDispatcher* aEvent)
+{
+  nsImageLoadingContent::AsyncEventRunning(aEvent);
 }
 
 NS_IMETHODIMP
@@ -5147,7 +5168,7 @@ HTMLInputElement::HandleTypeChange(uint8_t aNewType)
 void
 HTMLInputElement::SanitizeValue(nsAString& aValue)
 {
-  NS_ASSERTION(!mParserCreating, "The element parsing should be finished!");
+  NS_ASSERTION(mDoneCreating, "The element creation should be finished!");
 
   switch (mType) {
     case NS_FORM_INPUT_TEXT:
@@ -5612,7 +5633,8 @@ IsDateTimeEnabled(int32_t aNewType)
           (Preferences::GetBool("dom.forms.datetime", false) ||
            Preferences::GetBool("dom.experimental_forms", false))) ||
          ((aNewType == NS_FORM_INPUT_MONTH ||
-           aNewType == NS_FORM_INPUT_WEEK) &&
+           aNewType == NS_FORM_INPUT_WEEK ||
+           aNewType == NS_FORM_INPUT_DATETIME_LOCAL) &&
           Preferences::GetBool("dom.forms.datetime", false));
 }
 
@@ -6694,7 +6716,7 @@ HTMLInputElement::SaveState()
 void
 HTMLInputElement::DoneCreatingElement()
 {
-  mParserCreating = false;
+  mDoneCreating = true;
 
   //
   // Restore state as needed.  Note that disabled state applies to all control
@@ -6930,8 +6952,8 @@ HTMLInputElement::AddedToRadioGroup()
     return;
   }
 
-  // Make sure not to notify if we're still being created by the parser
-  bool notify = !mParserCreating;
+  // Make sure not to notify if we're still being created
+  bool notify = mDoneCreating;
 
   //
   // If the input element is checked, and we add it to the group, it will
@@ -7132,6 +7154,7 @@ HTMLInputElement::GetValueMode() const
     case NS_FORM_INPUT_COLOR:
     case NS_FORM_INPUT_MONTH:
     case NS_FORM_INPUT_WEEK:
+    case NS_FORM_INPUT_DATETIME_LOCAL:
       return VALUE_MODE_VALUE;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in GetValueMode()");
@@ -7179,6 +7202,7 @@ HTMLInputElement::DoesReadOnlyApply() const
     case NS_FORM_INPUT_TIME:
     case NS_FORM_INPUT_MONTH:
     case NS_FORM_INPUT_WEEK:
+    case NS_FORM_INPUT_DATETIME_LOCAL:
       return true;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in DoesReadOnlyApply()");
@@ -7218,6 +7242,7 @@ HTMLInputElement::DoesRequiredApply() const
     case NS_FORM_INPUT_TIME:
     case NS_FORM_INPUT_MONTH:
     case NS_FORM_INPUT_WEEK:
+    case NS_FORM_INPUT_DATETIME_LOCAL:
       return true;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in DoesRequiredApply()");
@@ -7261,8 +7286,7 @@ HTMLInputElement::DoesMinMaxApply() const
     case NS_FORM_INPUT_RANGE:
     case NS_FORM_INPUT_MONTH:
     case NS_FORM_INPUT_WEEK:
-    // TODO:
-    // All date/time types.
+    case NS_FORM_INPUT_DATETIME_LOCAL:
       return true;
 #ifdef DEBUG
     case NS_FORM_INPUT_RESET:
@@ -7310,6 +7334,7 @@ HTMLInputElement::DoesAutocompleteApply() const
     case NS_FORM_INPUT_COLOR:
     case NS_FORM_INPUT_MONTH:
     case NS_FORM_INPUT_WEEK:
+    case NS_FORM_INPUT_DATETIME_LOCAL:
       return true;
 #ifdef DEBUG
     case NS_FORM_INPUT_RESET:
@@ -7353,7 +7378,8 @@ HTMLInputElement::GetStep() const
   }
 
   // For input type=date, we round the step value to have a rounded day.
-  if (mType == NS_FORM_INPUT_DATE || mType == NS_FORM_INPUT_MONTH) {
+  if (mType == NS_FORM_INPUT_DATE || mType == NS_FORM_INPUT_MONTH ||
+      mType == NS_FORM_INPUT_WEEK) {
     step = std::max(step.round(), Decimal(1));
   }
 
@@ -7516,7 +7542,8 @@ HTMLInputElement::HasPatternMismatch() const
 bool
 HTMLInputElement::IsRangeOverflow() const
 {
-  if (!DoesMinMaxApply()) {
+  // TODO: this is temporary until bug 888331 is fixed.
+  if (!DoesMinMaxApply() || mType == NS_FORM_INPUT_DATETIME_LOCAL) {
     return false;
   }
 
@@ -7536,7 +7563,8 @@ HTMLInputElement::IsRangeOverflow() const
 bool
 HTMLInputElement::IsRangeUnderflow() const
 {
-  if (!DoesMinMaxApply()) {
+  // TODO: this is temporary until bug 888331 is fixed.
+  if (!DoesMinMaxApply() || mType == NS_FORM_INPUT_DATETIME_LOCAL) {
     return false;
   }
 
@@ -7686,7 +7714,7 @@ HTMLInputElement::UpdateTooShortValidityState()
 void
 HTMLInputElement::UpdateValueMissingValidityStateForRadio(bool aIgnoreSelf)
 {
-  bool notify = !mParserCreating;
+  bool notify = mDoneCreating;
   nsCOMPtr<nsIDOMHTMLInputElement> selection = GetSelectedRadioButton();
 
   aIgnoreSelf = aIgnoreSelf || !IsMutable();
@@ -8209,7 +8237,7 @@ HTMLInputElement::GetDefaultValueFromContent(nsAString& aValue)
     GetDefaultValue(aValue);
     // This is called by the frame to show the value.
     // We have to sanitize it when needed.
-    if (!mParserCreating) {
+    if (mDoneCreating) {
       SanitizeValue(aValue);
     }
   }
@@ -8489,6 +8517,8 @@ HTMLInputElement::GetStepScaleFactor() const
       return kStepScaleFactorTime;
     case NS_FORM_INPUT_MONTH:
       return kStepScaleFactorMonth;
+    case NS_FORM_INPUT_WEEK:
+      return kStepScaleFactorWeek;
     default:
       MOZ_ASSERT(false, "Unrecognized input type");
       return Decimal::nan();
@@ -8503,6 +8533,7 @@ HTMLInputElement::GetDefaultStep() const
   switch (mType) {
     case NS_FORM_INPUT_DATE:
     case NS_FORM_INPUT_MONTH:
+    case NS_FORM_INPUT_WEEK:
     case NS_FORM_INPUT_NUMBER:
     case NS_FORM_INPUT_RANGE:
       return kDefaultStep;
@@ -8541,7 +8572,8 @@ HTMLInputElement::UpdateHasRange()
 
   mHasRange = false;
 
-  if (!DoesMinMaxApply()) {
+  // TODO: this is temporary until bug 888331 is fixed.
+  if (!DoesMinMaxApply() || mType == NS_FORM_INPUT_DATETIME_LOCAL) {
     return;
   }
 

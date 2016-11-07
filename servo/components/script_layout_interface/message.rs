@@ -6,7 +6,7 @@ use {OpaqueStyleAndLayoutData, TrustedNodeAddress};
 use app_units::Au;
 use euclid::point::Point2D;
 use euclid::rect::Rect;
-use gfx_traits::{Epoch, LayerId};
+use gfx_traits::Epoch;
 use ipc_channel::ipc::{IpcReceiver, IpcSender};
 use msg::constellation_msg::PipelineId;
 use net_traits::image_cache_thread::ImageCacheThread;
@@ -21,7 +21,6 @@ use style::context::ReflowGoal;
 use style::selector_impl::PseudoElement;
 use style::stylesheets::Stylesheet;
 use url::Url;
-use util::ipc::OptionalOpaqueIpcSender;
 
 /// Asynchronous messages that script can send to layout.
 pub enum Msg {
@@ -48,10 +47,6 @@ pub enum Msg {
 
     /// Requests that the layout thread reflow with a newly-loaded Web font.
     ReflowWithNewlyLoadedWebFont,
-
-    /// Updates the layout visible rects, affecting the area that display lists will be constructed
-    /// for.
-    SetVisibleRects(Vec<(LayerId, Rect<Au>)>),
 
     /// Destroys layout data associated with a DOM node.
     ///
@@ -100,7 +95,6 @@ pub enum ReflowQueryType {
     NodeOverflowQuery(TrustedNodeAddress),
     HitTestQuery(Point2D<f32>, Point2D<f32>, bool),
     NodeGeometryQuery(TrustedNodeAddress),
-    NodeLayerIdQuery(TrustedNodeAddress),
     NodeScrollGeometryQuery(TrustedNodeAddress),
     ResolvedStyleQuery(TrustedNodeAddress, Option<PseudoElement>, Atom),
     OffsetParentQuery(TrustedNodeAddress),
@@ -148,7 +142,6 @@ pub struct NewLayoutThreadInfo {
     pub constellation_chan: IpcSender<ConstellationMsg>,
     pub script_chan: IpcSender<ConstellationControlMsg>,
     pub image_cache_thread: ImageCacheThread,
-    pub paint_chan: OptionalOpaqueIpcSender,
     pub content_process_shutdown_chan: IpcSender<()>,
     pub layout_threads: usize,
 }

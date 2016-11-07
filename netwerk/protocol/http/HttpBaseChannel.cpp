@@ -1408,22 +1408,6 @@ HttpBaseChannel::SetReferrerWithPolicy(nsIURI *referrer,
 
       // in other referrer policies, https->http is not allowed...
       if (!match) return NS_OK;
-
-      // ...and https->https is possibly only allowed if the hosts match.
-      if (!gHttpHandler->SendSecureXSiteReferrer()) {
-        nsAutoCString referrerHost;
-        nsAutoCString host;
-
-        rv = referrer->GetAsciiHost(referrerHost);
-        if (NS_FAILED(rv)) return rv;
-
-        rv = mURI->GetAsciiHost(host);
-        if (NS_FAILED(rv)) return rv;
-
-        // GetAsciiHost returns lowercase hostname.
-        if (!referrerHost.Equals(host))
-          return NS_OK;
-      }
     }
   }
 
@@ -1516,6 +1500,15 @@ HttpBaseChannel::SetReferrerWithPolicy(nsIURI *referrer,
   if (NS_FAILED(rv)) return rv;
 
   nsAutoCString spec;
+
+  // Apply the user cross-origin trimming policy if it's more
+  // restrictive than the general one.
+  if (isCrossOrigin) {
+    int userReferrerXOriginTrimmingPolicy =
+      gHttpHandler->ReferrerXOriginTrimmingPolicy();
+    userReferrerTrimmingPolicy =
+      std::max(userReferrerTrimmingPolicy, userReferrerXOriginTrimmingPolicy);
+  }
 
   // site-specified referrer trimming may affect the trim level
   // "unsafe-url" behaves like "origin" (send referrer in the same situations) but
@@ -2664,18 +2657,33 @@ HttpBaseChannel::ShouldIntercept(nsIURI* aURI)
   return shouldIntercept;
 }
 
-void HttpBaseChannel::CheckPrivateBrowsing()
+#ifdef DEBUG
+void HttpBaseChannel::AssertPrivateBrowsingId()
 {
   nsCOMPtr<nsILoadContext> loadContext;
   NS_QueryNotificationCallbacks(this, loadContext);
   // For addons it's possible that mLoadInfo is null.
-  if (mLoadInfo && loadContext) {
-      DocShellOriginAttributes docShellAttrs;
-      loadContext->GetOriginAttributes(docShellAttrs);
-      MOZ_ASSERT(mLoadInfo->GetOriginAttributes().mPrivateBrowsingId == docShellAttrs.mPrivateBrowsingId,
-                 "PrivateBrowsingId values are not the same between LoadInfo and LoadContext.");
+  if (!mLoadInfo) {
+    return;
   }
+
+  if (!loadContext) {
+    return;
+  }
+
+  // We skip testing of favicon loading here since it could be triggered by XUL image
+  // which uses SystemPrincipal. The SystemPrincpal doesn't have mPrivateBrowsingId.
+  if (nsContentUtils::IsSystemPrincipal(mLoadInfo->LoadingPrincipal()) &&
+      mLoadInfo->InternalContentPolicyType() == nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON) {
+    return;
+  }
+
+  DocShellOriginAttributes docShellAttrs;
+  loadContext->GetOriginAttributes(docShellAttrs);
+  MOZ_ASSERT(mLoadInfo->GetOriginAttributes().mPrivateBrowsingId == docShellAttrs.mPrivateBrowsingId,
+             "PrivateBrowsingId values are not the same between LoadInfo and LoadContext.");
 }
+#endif
 
 //-----------------------------------------------------------------------------
 // nsHttpChannel::nsITraceableChannel
@@ -2937,29 +2945,30 @@ HttpBaseChannel::SetupReplacementChannel(nsIURI       *newURI,
     bool isTopLevelDoc =
       newLoadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_DOCUMENT;
 
-    nsCOMPtr<nsILoadContext> loadContext;
-    NS_QueryNotificationCallbacks(this, loadContext);
-    DocShellOriginAttributes docShellAttrs;
-    if (loadContext) {
-      loadContext->GetOriginAttributes(docShellAttrs);
+    if (isTopLevelDoc) {
+      nsCOMPtr<nsILoadContext> loadContext;
+      NS_QueryNotificationCallbacks(this, loadContext);
+      DocShellOriginAttributes docShellAttrs;
+      if (loadContext) {
+        loadContext->GetOriginAttributes(docShellAttrs);
+      }
+      MOZ_ASSERT(docShellAttrs.mFirstPartyDomain.IsEmpty(),
+                 "top-level docshell shouldn't have firstPartyDomain attribute.");
+
+      NeckoOriginAttributes attrs = newLoadInfo->GetOriginAttributes();
+
+      MOZ_ASSERT(docShellAttrs.mAppId == attrs.mAppId,
+                "docshell and necko should have the same appId attribute.");
+      MOZ_ASSERT(docShellAttrs.mUserContextId == attrs.mUserContextId,
+                "docshell and necko should have the same userContextId attribute.");
+      MOZ_ASSERT(docShellAttrs.mInIsolatedMozBrowser == attrs.mInIsolatedMozBrowser,
+                "docshell and necko should have the same inIsolatedMozBrowser attribute.");
+      MOZ_ASSERT(docShellAttrs.mPrivateBrowsingId == attrs.mPrivateBrowsingId,
+                 "docshell and necko should have the same privateBrowsingId attribute.");
+
+      attrs.InheritFromDocShellToNecko(docShellAttrs, true, newURI);
+      newLoadInfo->SetOriginAttributes(attrs);
     }
-
-    // top-level docshell shouldn't have firstPartyDomain attribute.
-    MOZ_ASSERT_IF(isTopLevelDoc, docShellAttrs.mFirstPartyDomain.IsEmpty());
-
-    NeckoOriginAttributes attrs = newLoadInfo->GetOriginAttributes();
-
-    MOZ_ASSERT(docShellAttrs.mAppId == attrs.mAppId,
-               "docshell and necko should have the same appId attribute.");
-    MOZ_ASSERT(docShellAttrs.mUserContextId == attrs.mUserContextId,
-               "docshell and necko should have the same userContextId attribute.");
-    MOZ_ASSERT(docShellAttrs.mInIsolatedMozBrowser == attrs.mInIsolatedMozBrowser,
-               "docshell and necko should have the same inIsolatedMozBrowser attribute.");
-    MOZ_ASSERT(docShellAttrs.mPrivateBrowsingId == attrs.mPrivateBrowsingId,
-               "docshell and necko should have the same privateBrowsingId attribute.");
-
-    attrs.InheritFromDocShellToNecko(docShellAttrs, isTopLevelDoc, newURI);
-    newLoadInfo->SetOriginAttributes(attrs);
 
     bool isInternalRedirect =
       (redirectFlags & (nsIChannelEventSink::REDIRECT_INTERNAL |

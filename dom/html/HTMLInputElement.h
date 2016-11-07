@@ -121,8 +121,11 @@ public:
   using nsIConstraintValidation::Validity;
   using nsGenericHTMLFormElementWithState::GetForm;
 
+  enum class FromClone { no, yes };
+
   HTMLInputElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
-                   mozilla::dom::FromParser aFromParser);
+                   mozilla::dom::FromParser aFromParser,
+                   FromClone aFromClone = FromClone::no);
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLInputElement, input)
 
@@ -141,6 +144,9 @@ public:
 
   // Element
   virtual bool IsInteractiveHTMLContent(bool aIgnoreTabindex) const override;
+
+  // EventTarget
+  virtual void AsyncEventRunning(AsyncEventDispatcher* aEvent) override;
 
   // nsIDOMHTMLInputElement
   NS_DECL_NSIDOMHTMLINPUTELEMENT
@@ -1055,8 +1061,8 @@ protected:
    */
   bool DoesStepApply() const
   {
-    // TODO: this is temporary until bug 888316 is fixed.
-    return DoesMinMaxApply() && mType != NS_FORM_INPUT_WEEK;
+    // TODO: this is temporary until bug 888331 is fixed.
+    return DoesMinMaxApply() && mType != NS_FORM_INPUT_DATETIME_LOCAL;
   }
 
   /**
@@ -1067,7 +1073,11 @@ protected:
   /**
    * Returns if valueAsNumber attribute applies for the current type.
    */
-  bool DoesValueAsNumberApply() const { return DoesMinMaxApply(); }
+  bool DoesValueAsNumberApply() const
+  {
+    // TODO: this is temporary until bug 888331 is fixed.
+    return DoesMinMaxApply() && mType != NS_FORM_INPUT_DATETIME_LOCAL;
+  }
 
   /**
    * Returns if autocomplete attribute applies for the current type.
@@ -1507,9 +1517,13 @@ protected:
   static const Decimal kStepScaleFactorNumberRange;
   static const Decimal kStepScaleFactorTime;
   static const Decimal kStepScaleFactorMonth;
+  static const Decimal kStepScaleFactorWeek;
 
   // Default step base value when a type do not have specific one.
   static const Decimal kDefaultStepBase;
+  // Default step base value when type=week does not not have a specific one,
+  // which is −259200000, the start of week 1970-W01.
+  static const Decimal kDefaultStepBaseWeek;
 
   // Default step used when there is no specified step.
   static const Decimal kDefaultStep;
@@ -1547,7 +1561,7 @@ protected:
   bool                     mChecked             : 1;
   bool                     mHandlingSelectEvent : 1;
   bool                     mShouldInitChecked   : 1;
-  bool                     mParserCreating      : 1;
+  bool                     mDoneCreating        : 1;
   bool                     mInInternalActivate  : 1;
   bool                     mCheckedIsToggled    : 1;
   bool                     mIndeterminate       : 1;

@@ -2843,6 +2843,11 @@ CanvasRenderingContext2D::UpdateFilter()
 {
   nsCOMPtr<nsIPresShell> presShell = GetPresShell();
   if (!presShell || presShell->IsDestroying()) {
+    // Ensure we set an empty filter and update the state to
+    // reflect the current "taint" status of the canvas
+    CurrentState().filter = FilterDescription();
+    CurrentState().filterSourceGraphicTainted =
+      (mCanvasElement && mCanvasElement->IsWriteOnly());
     return;
   }
 
@@ -2851,9 +2856,13 @@ CanvasRenderingContext2D::UpdateFilter()
   // with.
   presShell->FlushPendingNotifications(Flush_Frames);
 
+  bool sourceGraphicIsTainted =
+    (mCanvasElement && mCanvasElement->IsWriteOnly());
+
   CurrentState().filter =
     nsFilterInstance::GetFilterDescription(mCanvasElement,
       CurrentState().filterChain,
+      sourceGraphicIsTainted,
       CanvasUserSpaceMetrics(GetSize(),
                              CurrentState().fontFont,
                              CurrentState().fontLanguage,
@@ -2861,8 +2870,7 @@ CanvasRenderingContext2D::UpdateFilter()
                              presShell->GetPresContext()),
       gfxRect(0, 0, mWidth, mHeight),
       CurrentState().filterAdditionalImages);
-  CurrentState().filterSourceGraphicTainted =
-    (mCanvasElement && mCanvasElement->IsWriteOnly());
+  CurrentState().filterSourceGraphicTainted = sourceGraphicIsTainted;
 }
 
 //
@@ -4933,6 +4941,11 @@ CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
   if (NeedToCalculateBounds()) {
     bounds = gfx::Rect(aDx, aDy, aDw, aDh);
     bounds = mTarget->GetTransform().TransformBounds(bounds);
+  }
+
+  if (!IsTargetValid()) {
+    gfxCriticalError() << "Unexpected invalid target in a Canvas2d.";
+    return;
   }
 
   if (srcSurf) {

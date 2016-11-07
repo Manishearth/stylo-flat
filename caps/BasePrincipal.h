@@ -279,7 +279,6 @@ public:
   NS_IMETHOD GetIsCodebasePrincipal(bool* aResult) override;
   NS_IMETHOD GetIsExpandedPrincipal(bool* aResult) override;
   NS_IMETHOD GetIsSystemPrincipal(bool* aResult) override;
-  NS_IMETHOD GetJarPrefix(nsACString& aJarPrefix) final;
   NS_IMETHOD GetOriginAttributes(JSContext* aCx, JS::MutableHandle<JS::Value> aVal) final;
   NS_IMETHOD GetOriginSuffix(nsACString& aOriginSuffix) final;
   NS_IMETHOD GetAppStatus(uint16_t* aAppStatus) final;
@@ -289,6 +288,8 @@ public:
   NS_IMETHOD GetUnknownAppId(bool* aUnknownAppId) final;
   NS_IMETHOD GetUserContextId(uint32_t* aUserContextId) final;
   NS_IMETHOD GetPrivateBrowsingId(uint32_t* aPrivateBrowsingId) final;
+
+  bool EqualsIgnoringAddonId(nsIPrincipal *aOther);
 
   virtual bool AddonHasPermission(const nsAString& aPerm);
 
@@ -322,6 +323,8 @@ protected:
   virtual ~BasePrincipal();
 
   virtual nsresult GetOriginInternal(nsACString& aOrigin) = 0;
+  // Note that this does not check OriginAttributes. Callers that depend on
+  // those must call Subsumes instead.
   virtual bool SubsumesInternal(nsIPrincipal* aOther, DocumentDomainConsideration aConsider) = 0;
 
   // Internal, side-effect-free check to determine whether the concrete

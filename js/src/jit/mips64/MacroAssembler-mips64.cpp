@@ -91,8 +91,6 @@ MacroAssemblerMIPS64Compat::convertInt64ToFloat32(Register src, FloatRegister de
 void
 MacroAssemblerMIPS64Compat::convertUInt64ToDouble(Register src, FloatRegister dest)
 {
-    MOZ_ASSERT(temp == Register::Invalid());
-
     Label positive, done;
     ma_b(src, src, &positive, NotSigned, ShortJump);
 
@@ -482,8 +480,8 @@ template void
 MacroAssemblerMIPS64::ma_addTestOverflow<Label*>(Register rd, Register rs,
                                                  Register rt, Label* overflow);
 template void
-MacroAssemblerMIPS64::ma_addTestOverflow<wasm::JumpTarget>(Register rd, Register rs, Register rt,
-                                                           wasm::JumpTarget overflow);
+MacroAssemblerMIPS64::ma_addTestOverflow<wasm::TrapDesc>(Register rd, Register rs, Register rt,
+                                                         wasm::TrapDesc overflow);
 
 template <typename L>
 void
@@ -504,8 +502,8 @@ template void
 MacroAssemblerMIPS64::ma_addTestOverflow<Label*>(Register rd, Register rs,
                                                  Imm32 imm, Label* overflow);
 template void
-MacroAssemblerMIPS64::ma_addTestOverflow<wasm::JumpTarget>(Register rd, Register rs, Imm32 imm,
-                                                           wasm::JumpTarget overflow);
+MacroAssemblerMIPS64::ma_addTestOverflow<wasm::TrapDesc>(Register rd, Register rs, Imm32 imm,
+                                                         wasm::TrapDesc overflow);
 
 // Subtract.
 void
@@ -1748,9 +1746,8 @@ MacroAssemblerMIPS64Compat::extractTag(const BaseIndex& address, Register scratc
 void
 MacroAssemblerMIPS64Compat::moveValue(const Value& val, Register dest)
 {
-    jsval_layout jv = JSVAL_TO_IMPL(val);
     writeDataRelocation(val);
-    movWithPatch(ImmWord(jv.asBits), dest);
+    movWithPatch(ImmWord(val.asRawBits()), dest);
 }
 
 void
@@ -1888,12 +1885,11 @@ MacroAssemblerMIPS64Compat::storeValue(JSValueType type, Register reg, Address d
 void
 MacroAssemblerMIPS64Compat::storeValue(const Value& val, Address dest)
 {
-    jsval_layout jv = JSVAL_TO_IMPL(val);
     if (val.isMarkable()) {
         writeDataRelocation(val);
-        movWithPatch(ImmWord(jv.asBits), SecondScratchReg);
+        movWithPatch(ImmWord(val.asRawBits()), SecondScratchReg);
     } else {
-        ma_li(SecondScratchReg, ImmWord(jv.asBits));
+        ma_li(SecondScratchReg, ImmWord(val.asRawBits()));
     }
     storePtr(SecondScratchReg, Address(dest.base, dest.offset));
 }
@@ -2274,6 +2270,13 @@ MacroAssemblerMIPS64Compat::profilerExitFrame()
     branch(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
 }
 
+void
+MacroAssembler::subFromStackPtr(Imm32 imm32)
+{
+    if (imm32.value)
+        asMasm().subPtr(imm32, StackPointer);
+}
+
 //{{{ check_macroassembler_style
 // ===============================================================
 // Stack manipulation functions.
@@ -2316,14 +2319,6 @@ MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set, LiveRegisterSet ignore)
     }
     MOZ_ASSERT(diff == 0);
     freeStack(reserved);
-}
-
-void
-MacroAssembler::reserveStack(uint32_t amount)
-{
-    if (amount)
-        asMasm().subPtr(Imm32(amount), StackPointer);
-    adjustFrame(amount);
 }
 
 // ===============================================================

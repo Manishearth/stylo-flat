@@ -51,7 +51,6 @@
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/ContentProcessController.h"
 #include "mozilla/layers/ImageBridgeChild.h"
-#include "mozilla/layers/SharedBufferManagerChild.h"
 #include "mozilla/layout/RenderFrameChild.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/plugins/PluginInstanceParent.h"
@@ -62,6 +61,7 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/WebBrowserPersistDocumentChild.h"
 #include "imgLoader.h"
+#include "GMPServiceChild.h"
 
 #if defined(MOZ_CONTENT_SANDBOX)
 #if defined(XP_WIN)
@@ -84,6 +84,7 @@
 #include "nsDocShell.h"
 #include "nsIConsoleListener.h"
 #include "nsICycleCollectorListener.h"
+#include "nsIIdlePeriod.h"
 #include "nsIDragService.h"
 #include "nsIIPCBackgroundChildCreateCallback.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -172,9 +173,7 @@
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/icc/IccChild.h"
 #include "mozilla/dom/mobileconnection/MobileConnectionChild.h"
-#include "mozilla/dom/mobilemessage/SmsChild.h"
 #include "mozilla/dom/devicestorage/DeviceStorageRequestChild.h"
-#include "mozilla/dom/bluetooth/PBluetoothChild.h"
 #include "mozilla/dom/PPresentationChild.h"
 #include "mozilla/dom/PresentationIPCService.h"
 #include "mozilla/ipc/InputStreamUtils.h"
@@ -190,9 +189,7 @@
 #include "nsDeviceStorage.h"
 #include "DomainPolicy.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
-#include "mozilla/dom/telephony/PTelephonyChild.h"
 #include "mozilla/dom/time/DateCacheCleaner.h"
-#include "mozilla/dom/voicemail/VoicemailIPCService.h"
 #include "mozilla/net/NeckoMessageUtils.h"
 #include "mozilla/widget/PuppetBidiKeyboard.h"
 #include "mozilla/RemoteSpellCheckEngineChild.h"
@@ -204,14 +201,10 @@
 
 using namespace mozilla;
 using namespace mozilla::docshell;
-using namespace mozilla::dom::bluetooth;
 using namespace mozilla::dom::devicestorage;
 using namespace mozilla::dom::icc;
 using namespace mozilla::dom::ipc;
 using namespace mozilla::dom::mobileconnection;
-using namespace mozilla::dom::mobilemessage;
-using namespace mozilla::dom::telephony;
-using namespace mozilla::dom::voicemail;
 using namespace mozilla::dom::workers;
 using namespace mozilla::media;
 using namespace mozilla::embedding;
@@ -509,6 +502,9 @@ ContentChild* ContentChild::sSingleton;
 
 ContentChild::ContentChild()
  : mID(uint64_t(-1))
+#if defined(XP_WIN) && defined(ACCESSIBILITY)
+ , mMsaaID(0)
+#endif
  , mCanOverrideProcessName(true)
  , mIsAlive(true)
  , mShuttingDown(false)
@@ -666,13 +662,14 @@ ContentChild::ProvideWindow(mozIDOMWindowProxy* aParent,
                             nsIURI* aURI,
                             const nsAString& aName,
                             const nsACString& aFeatures,
+                            bool aForceNoOpener,
                             bool* aWindowIsNew,
                             mozIDOMWindowProxy** aReturn)
 {
   return ProvideWindowCommon(nullptr, aParent, false, aChromeFlags,
                              aCalledFromJS, aPositionSpecified,
                              aSizeSpecified, aURI, aName, aFeatures,
-                             aWindowIsNew, aReturn);
+                             aForceNoOpener, aWindowIsNew, aReturn);
 }
 
 nsresult
@@ -686,6 +683,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
                                   nsIURI* aURI,
                                   const nsAString& aName,
                                   const nsACString& aFeatures,
+                                  bool aForceNoOpener,
                                   bool* aWindowIsNew,
                                   mozIDOMWindowProxy** aReturn)
 {
@@ -828,6 +826,17 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
                         context->UsePrivateBrowsing(), true, false,
                         aTabOpener->mDPI, aTabOpener->mRounding,
                         aTabOpener->mDefaultScale);
+  }
+
+  // Set the opener window for this window before we start loading the document
+  // inside of it. We have to do this before loading the remote scripts, because
+  // they can poke at the document and cause the nsDocument to be created before
+  // the openerwindow
+  nsCOMPtr<mozIDOMWindowProxy> windowProxy = do_GetInterface(newChild->WebNavigation());
+  if (!aForceNoOpener && windowProxy && aParent) {
+    nsPIDOMWindowOuter* outer = nsPIDOMWindowOuter::From(windowProxy);
+    nsPIDOMWindowOuter* parent = nsPIDOMWindowOuter::From(aParent);
+    outer->SetOpenerWindow(parent, *aWindowIsNew);
   }
 
   // Unfortunately we don't get a window unless we've shown the frame.  That's
@@ -1168,6 +1177,13 @@ ContentChild::AllocPGMPServiceChild(mozilla::ipc::Transport* aTransport,
 }
 
 bool
+ContentChild::RecvGMPsChanged(nsTArray<GMPCapabilityData>&& capabilities)
+{
+  GeckoMediaPluginServiceChild::UpdateGMPCapabilities(Move(capabilities));
+  return true;
+}
+
+bool
 ContentChild::RecvInitRendering(Endpoint<PCompositorBridgeChild>&& aCompositor,
                                 Endpoint<PImageBridgeChild>&& aImageBridge,
                                 Endpoint<PVRManagerChild>&& aVRBridge)
@@ -1216,13 +1232,6 @@ ContentChild::RecvReinitRendering(Endpoint<PCompositorBridgeChild>&& aCompositor
     }
   }
   return true;
-}
-
-PSharedBufferManagerChild*
-ContentChild::AllocPSharedBufferManagerChild(mozilla::ipc::Transport* aTransport,
-                                              base::ProcessId aOtherProcess)
-{
-  return SharedBufferManagerChild::StartUpInChildProcess(aTransport, aOtherProcess);
 }
 
 PBackgroundChild*
@@ -1427,7 +1436,11 @@ ContentChild::RecvSetProcessSandbox(const MaybeFileDesc& aBroker)
     NS_LITERAL_CSTRING("ContentSandboxEnabled"),
     sandboxEnabled? NS_LITERAL_CSTRING("1") : NS_LITERAL_CSTRING("0"));
 #if defined(XP_LINUX) && !defined(OS_ANDROID)
-  SandboxInfo::Get().AnnotateCrashReport();
+  nsAutoCString flagsString;
+  flagsString.AppendInt(SandboxInfo::Get().AsInteger());
+
+  CrashReporter::AnnotateCrashReport(
+    NS_LITERAL_CSTRING("ContentSandboxCapabilities"), flagsString);
 #endif /* XP_LINUX && !OS_ANDROID */
 #endif /* MOZ_CRASHREPORTER */
 #endif /* MOZ_CONTENT_SANDBOX */
@@ -1438,6 +1451,10 @@ ContentChild::RecvSetProcessSandbox(const MaybeFileDesc& aBroker)
 bool
 ContentChild::RecvNotifyLayerAllocated(const dom::TabId& aTabId, const uint64_t& aLayersId)
 {
+  if (!CompositorBridgeChild::Get()->IPCOpen()) {
+    return true;
+  }
+
   APZChild* apz = ContentProcessController::Create(aTabId);
   return CompositorBridgeChild::Get()->SendPAPZConstructor(apz, aLayersId);
 }
@@ -1979,56 +1996,6 @@ bool ContentChild::DeallocPHandlerServiceChild(PHandlerServiceChild* aHandlerSer
   return true;
 }
 
-PSmsChild*
-ContentChild::AllocPSmsChild()
-{
-  return new SmsChild();
-}
-
-bool
-ContentChild::DeallocPSmsChild(PSmsChild* aSms)
-{
-  delete aSms;
-  return true;
-}
-
-PTelephonyChild*
-ContentChild::AllocPTelephonyChild()
-{
-  MOZ_CRASH("No one should be allocating PTelephonyChild actors");
-}
-
-bool
-ContentChild::DeallocPTelephonyChild(PTelephonyChild* aActor)
-{
-  delete aActor;
-  return true;
-}
-
-PVoicemailChild*
-ContentChild::AllocPVoicemailChild()
-{
-  MOZ_CRASH("No one should be allocating PVoicemailChild actors");
-}
-
-PVoicemailChild*
-ContentChild::SendPVoicemailConstructor(PVoicemailChild* aActor)
-{
-  aActor = PContentChild::SendPVoicemailConstructor(aActor);
-  if (aActor) {
-    static_cast<VoicemailIPCService*>(aActor)->AddRef();
-  }
-
-  return aActor;
-}
-
-bool
-ContentChild::DeallocPVoicemailChild(PVoicemailChild* aActor)
-{
-  static_cast<VoicemailIPCService*>(aActor)->Release();
-  return true;
-}
-
 media::PMediaChild*
 ContentChild::AllocPMediaChild()
 {
@@ -2054,27 +2021,6 @@ ContentChild::DeallocPStorageChild(PStorageChild* aActor)
   DOMStorageDBChild* child = static_cast<DOMStorageDBChild*>(aActor);
   child->ReleaseIPDLReference();
   return true;
-}
-
-PBluetoothChild*
-ContentChild::AllocPBluetoothChild()
-{
-#ifdef MOZ_B2G_BT
-  MOZ_CRASH("No one should be allocating PBluetoothChild actors");
-#else
-  MOZ_CRASH("No support for bluetooth on this platform!");
-#endif
-}
-
-bool
-ContentChild::DeallocPBluetoothChild(PBluetoothChild* aActor)
-{
-#ifdef MOZ_B2G_BT
-  delete aActor;
-  return true;
-#else
-  MOZ_CRASH("No support for bluetooth on this platform!");
-#endif
 }
 
 PSpeechSynthesisChild*
@@ -2471,13 +2417,18 @@ ContentChild::RecvFlushMemory(const nsString& reason)
 }
 
 bool
-ContentChild::RecvActivateA11y()
+ContentChild::RecvActivateA11y(const uint32_t& aMsaaID)
 {
 #ifdef ACCESSIBILITY
+#ifdef XP_WIN
+  MOZ_ASSERT(aMsaaID != 0);
+  mMsaaID = aMsaaID;
+#endif // XP_WIN
+
   // Start accessibility in content process if it's running in chrome
   // process.
   GetOrCreateAccService(nsAccessibilityService::eMainProcess);
-#endif
+#endif // ACCESSIBILITY
   return true;
 }
 
@@ -2804,16 +2755,6 @@ ContentChild::DeallocPOfflineCacheUpdateChild(POfflineCacheUpdateChild* actor)
   OfflineCacheUpdateChild* offlineCacheUpdate =
     static_cast<OfflineCacheUpdateChild*>(actor);
   NS_RELEASE(offlineCacheUpdate);
-  return true;
-}
-
-bool
-ContentChild::RecvOnAppThemeChanged()
-{
-  nsCOMPtr<nsIObserverService> os = services::GetObserverService();
-  if (os) {
-    os->NotifyObservers(nullptr, "app-theme-changed", nullptr);
-  }
   return true;
 }
 
@@ -3342,6 +3283,13 @@ ContentChild::RecvBlobURLUnregistration(const nsCString& aURI)
   return true;
 }
 
+#if defined(XP_WIN) && defined(ACCESSIBILITY)
+bool
+ContentChild::SendGetA11yContentId()
+{
+  return PContentChild::SendGetA11yContentId(&mMsaaID);
+}
+#endif // defined(XP_WIN) && defined(ACCESSIBILITY)
 
 void
 ContentChild::CreateGetFilesRequest(const nsAString& aDirectoryPath,

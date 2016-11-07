@@ -14,6 +14,7 @@
  * https://dvcs.w3.org/hg/webcrypto-api/raw-file/tip/spec/Overview.html
  * http://dvcs.w3.org/hg/speech-api/raw-file/tip/speechapi.html
  * https://w3c.github.io/webappsec-secure-contexts/#monkey-patching-global-object
+ * https://w3c.github.io/requestidlecallback/
  */
 
 interface ApplicationCache;
@@ -36,8 +37,8 @@ typedef any Transferable;
   [PutForwards=href, Unforgeable, Throws,
    CrossOriginReadable, CrossOriginWritable] readonly attribute Location? location;
   [Throws] readonly attribute History history;
-  [Func="CustomElementsRegistry::IsCustomElementsEnabled"]
-  readonly attribute CustomElementsRegistry customElements;
+  [Func="CustomElementRegistry::IsCustomElementEnabled"]
+  readonly attribute CustomElementRegistry customElements;
   [Replaceable, Throws] readonly attribute BarProp locationbar;
   [Replaceable, Throws] readonly attribute BarProp menubar;
   [Replaceable, Throws] readonly attribute BarProp personalbar;
@@ -60,11 +61,8 @@ typedef any Transferable;
   //[Throws] readonly attribute WindowProxy parent;
   [Replaceable, Throws, CrossOriginReadable] readonly attribute WindowProxy? parent;
   [Throws, NeedsSubjectPrincipal] readonly attribute Element? frameElement;
-  //[Throws] WindowProxy open(optional DOMString url = "about:blank", optional DOMString target = "_blank", [TreatNullAs=EmptyString] optional DOMString features = "", optional boolean replace = false);
+  //[Throws] WindowProxy? open(optional USVString url = "about:blank", optional DOMString target = "_blank", [TreatNullAs=EmptyString] optional DOMString features = "");
   [Throws, UnsafeInPrerendering] WindowProxy? open(optional DOMString url = "", optional DOMString target = "", [TreatNullAs=EmptyString] optional DOMString features = "");
-  // We think the indexed getter is a bug in the spec, it actually needs to live
-  // on the WindowProxy
-  //getter WindowProxy (unsigned long index);
   getter object (DOMString name);
 
   // the user agent
@@ -92,10 +90,10 @@ typedef any Transferable;
 Window implements GlobalEventHandlers;
 Window implements WindowEventHandlers;
 
-// https://w3c.github.io/manifest/#oninstall-attribute
+// https://www.w3.org/TR/appmanifest/#onappinstalled-attribute
 partial interface Window {
-  [Pref="dom.manifest.oninstall"]
-  attribute EventHandler oninstall;
+  [Pref="dom.manifest.onappinstalled"]
+  attribute EventHandler onappinstalled;
 };
 
 // http://www.whatwg.org/specs/web-apps/current-work/
@@ -124,9 +122,6 @@ partial interface Window {
   //[Throws] Selection getSelection();
   [Throws] Selection? getSelection();
 };
-
-// https://dvcs.w3.org/hg/IndexedDB/raw-file/tip/Overview.html
-Window implements IDBEnvironment;
 
 // http://dev.w3.org/csswg/cssom/
 partial interface Window {
@@ -493,3 +488,17 @@ partial interface Window {
 
 Window implements ChromeWindow;
 Window implements WindowOrWorkerGlobalScope;
+
+partial interface Window {
+  [Throws, Pref="dom.requestIdleCallback.enabled"]
+  unsigned long requestIdleCallback(IdleRequestCallback callback,
+                                    optional IdleRequestOptions options);
+  [Pref="dom.requestIdleCallback.enabled"]
+  void          cancelIdleCallback(unsigned long handle);
+};
+
+dictionary IdleRequestOptions {
+  unsigned long timeout;
+};
+
+callback IdleRequestCallback = void (IdleDeadline deadline);

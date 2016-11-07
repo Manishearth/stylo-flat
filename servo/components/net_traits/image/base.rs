@@ -4,9 +4,26 @@
 
 use ipc_channel::ipc::IpcSharedMemory;
 use piston_image::{self, DynamicImage, ImageFormat};
-use util::opts;
+use webrender_traits;
 
-pub use msg::constellation_msg::{Image, PixelFormat};
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize, HeapSizeOf)]
+pub enum PixelFormat {
+    K8,         // Luminance channel only
+    KA8,        // Luminance + alpha
+    RGB8,       // RGB, 8 bits per channel
+    RGBA8,      // RGB + alpha, 8 bits per channel
+}
+
+#[derive(Clone, Deserialize, Serialize, HeapSizeOf)]
+pub struct Image {
+    pub width: u32,
+    pub height: u32,
+    pub format: PixelFormat,
+    #[ignore_heap_size_of = "Defined in ipc-channel"]
+    pub bytes: IpcSharedMemory,
+    #[ignore_heap_size_of = "Defined in webrender_traits"]
+    pub id: Option<webrender_traits::ImageKey>,
+}
 
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize, HeapSizeOf)]
 pub struct ImageMetadata {
@@ -21,24 +38,14 @@ pub struct ImageMetadata {
 fn byte_swap_and_premultiply(data: &mut [u8]) {
     let length = data.len();
 
-    // No need to pre-multiply alpha when using direct GPU rendering.
-    let premultiply_alpha = !opts::get().use_webrender;
-
     for i in (0..length).step_by(4) {
         let r = data[i + 2];
         let g = data[i + 1];
         let b = data[i + 0];
-        let a = data[i + 3];
 
-        if premultiply_alpha {
-            data[i + 0] = ((r as u32) * (a as u32) / 255) as u8;
-            data[i + 1] = ((g as u32) * (a as u32) / 255) as u8;
-            data[i + 2] = ((b as u32) * (a as u32) / 255) as u8;
-        } else {
-            data[i + 0] = r;
-            data[i + 1] = g;
-            data[i + 2] = b;
-        }
+        data[i + 0] = r;
+        data[i + 1] = g;
+        data[i + 2] = b;
     }
 }
 

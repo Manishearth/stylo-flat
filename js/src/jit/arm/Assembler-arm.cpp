@@ -2197,7 +2197,12 @@ Assembler::as_BranchPool(uint32_t value, RepatchLabel* label, ARMBuffer::PoolEnt
     // with a correct branch.
     if (label->bound()) {
         BufferOffset dest(label);
-        as_b(dest.diffB<BOffImm>(ret), c, ret);
+        BOffImm offset = dest.diffB<BOffImm>(ret);
+        if (offset.isInvalid()) {
+            m_buffer.fail_bail();
+            return ret;
+        }
+        as_b(offset, c, ret);
     } else if (!oom()) {
         label->use(ret.getOffset());
     }
@@ -2385,6 +2390,8 @@ void
 Assembler::WritePoolGuard(BufferOffset branch, Instruction* dest, BufferOffset afterPool)
 {
     BOffImm off = afterPool.diffB<BOffImm>(branch);
+    if (off.isInvalid())
+        MOZ_CRASH("BOffImm invalid");
     *dest = InstBImm(off, Always);
 }
 
@@ -2442,7 +2449,7 @@ Assembler::as_b(Label* l, Condition c)
 }
 
 BufferOffset
-Assembler::as_b(wasm::JumpTarget target, Condition c)
+Assembler::as_b(wasm::TrapDesc target, Condition c)
 {
     Label l;
     BufferOffset ret = as_b(&l, c);
@@ -2487,7 +2494,13 @@ Assembler::as_bl(Label* l, Condition c)
         if (oom())
             return BufferOffset();
 
-        as_bl(BufferOffset(l).diffB<BOffImm>(ret), c, ret);
+        BOffImm offset = BufferOffset(l).diffB<BOffImm>(ret);
+        if (offset.isInvalid()) {
+            m_buffer.fail_bail();
+            return BufferOffset();
+        }
+
+        as_bl(offset, c, ret);
 #ifdef JS_DISASM_ARM
         spewBranch(m_buffer.getInstOrNull(ret), l);
 #endif
@@ -2861,10 +2874,15 @@ Assembler::bind(Label* label, BufferOffset boff)
             more = nextLink(b, &next);
             Instruction branch = *editSrc(b);
             Condition c = branch.extractCond();
+            BOffImm offset = dest.diffB<BOffImm>(b);
+            if (offset.isInvalid()) {
+                m_buffer.fail_bail();
+                return;
+            }
             if (branch.is<InstBImm>())
-                as_b(dest.diffB<BOffImm>(b), c, b);
+                as_b(offset, c, b);
             else if (branch.is<InstBLImm>())
-                as_bl(dest.diffB<BOffImm>(b), c, b);
+                as_bl(offset, c, b);
             else
                 MOZ_CRASH("crazy fixup!");
             b = next;
@@ -2875,12 +2893,12 @@ Assembler::bind(Label* label, BufferOffset boff)
 }
 
 void
-Assembler::bindLater(Label* label, wasm::JumpTarget target)
+Assembler::bindLater(Label* label, wasm::TrapDesc target)
 {
     if (label->used()) {
         BufferOffset b(label);
         do {
-            append(target, b.getOffset());
+            append(wasm::TrapSite(target, b.getOffset()));
         } while (nextLink(b, &b));
     }
     label->reset();
@@ -2907,7 +2925,13 @@ Assembler::bind(RepatchLabel* label)
             cond = p.phd.getCond();
         else
             cond = branch->extractCond();
-        as_b(dest.diffB<BOffImm>(branchOff), cond, branchOff);
+
+        BOffImm offset = dest.diffB<BOffImm>(branchOff);
+        if (offset.isInvalid()) {
+            m_buffer.fail_bail();
+            return;
+        }
+        as_b(offset, cond, branchOff);
     }
     label->bind(dest.getOffset());
 }

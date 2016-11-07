@@ -42,9 +42,10 @@ use encoding::all::UTF_8;
 use encoding::label::encoding_from_whatwg_label;
 use hyper::header::{Charset, ContentDisposition, ContentType, DispositionParam, DispositionType};
 use hyper::method::Method;
-use msg::constellation_msg::{LoadData, PipelineId};
+use msg::constellation_msg::PipelineId;
 use rand::random;
 use script_thread::{MainThreadScriptMsg, Runnable};
+use script_traits::LoadData;
 use std::borrow::ToOwned;
 use std::cell::Cell;
 use std::sync::mpsc::Sender;
@@ -104,7 +105,7 @@ impl HTMLFormElementMethods for HTMLFormElement {
     make_setter!(SetAction, "action");
 
     // https://html.spec.whatwg.org/multipage/#dom-form-autocomplete
-    make_enumerated_getter!(Autocomplete, "autocomplete", "on", ("off"));
+    make_enumerated_getter!(Autocomplete, "autocomplete", "on", "off");
 
     // https://html.spec.whatwg.org/multipage/#dom-form-autocomplete
     make_setter!(SetAutocomplete, "autocomplete");
@@ -113,7 +114,7 @@ impl HTMLFormElementMethods for HTMLFormElement {
     make_enumerated_getter!(Enctype,
                             "enctype",
                             "application/x-www-form-urlencoded",
-                            ("text/plain") | ("multipart/form-data"));
+                            "text/plain" | "multipart/form-data");
 
     // https://html.spec.whatwg.org/multipage/#dom-fs-enctype
     make_setter!(SetEnctype, "enctype");
@@ -129,7 +130,7 @@ impl HTMLFormElementMethods for HTMLFormElement {
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-fs-method
-    make_enumerated_getter!(Method, "method", "get", ("post") | ("dialog"));
+    make_enumerated_getter!(Method, "method", "get", "post" | "dialog");
 
     // https://html.spec.whatwg.org/multipage/#dom-fs-method
     make_setter!(SetMethod, "method");
@@ -634,8 +635,7 @@ impl HTMLFormElement {
                 //    {}
                 //}
                 NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLSelectElement)) => {
-                    // Unimplemented
-                    {}
+                    child.downcast::<HTMLSelectElement>().unwrap().reset();
                 }
                 NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLTextAreaElement)) => {
                     child.downcast::<HTMLTextAreaElement>().unwrap().reset();

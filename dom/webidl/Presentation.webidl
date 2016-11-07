@@ -5,7 +5,7 @@
  */
 
 [Pref="dom.presentation.enabled"]
-interface Presentation : EventTarget {
+interface Presentation {
  /*
   * This should be used by the UA as the default presentation request for the
   * controller. When the UA wishes to initiate a PresentationConnection on the
@@ -13,6 +13,9 @@ interface Presentation : EventTarget {
   * presentation request (as if the controller had called |defaultRequest.start()|).
   *
   * Only used by controlling browsing context (senders).
+  *
+  * The origin of this IDL file is
+  * https://w3c.github.io/presentation-api/#interface-presentation
   */
   [Pref="dom.presentation.controller.enabled"]
   attribute PresentationRequest? defaultRequest;

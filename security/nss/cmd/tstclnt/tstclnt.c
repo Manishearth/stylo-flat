@@ -100,6 +100,9 @@ static char *progName;
 
 secuPWData pwdata = { PW_NONE, 0 };
 
+SSLNamedGroup *enabledGroups = NULL;
+unsigned int enabledGroupsCount = 0;
+
 void
 printSecurityInfo(PRFileDesc *fd)
 {
@@ -188,7 +191,7 @@ PrintUsageHeader(const char *progName)
             "[-D | -d certdir] [-C] [-b | -R root-module] \n"
             "[-n nickname] [-Bafosvx] [-c ciphers] [-Y]\n"
             "[-V [min-version]:[max-version]] [-K] [-T] [-U]\n"
-            "[-r N] [-w passwd] [-W pwfile] [-q [-t seconds]]\n",
+            "[-r N] [-w passwd] [-W pwfile] [-q [-t seconds]] [-I groups]\n",
             progName);
 }
 
@@ -255,6 +258,10 @@ PrintParameterUsage(void)
     fprintf(stderr, "%-20s Require the use of FFDHE supported groups "
                     "[I-D.ietf-tls-negotiated-ff-dhe]\n",
             "-H");
+    fprintf(stderr, "%-20s Comma separated list of enabled groups for TLS key exchange.\n"
+                    "%-20s The following values are valid:\n"
+                    "%-20s P256, P384, P521, x25519, FF2048, FF3072, FF4096, FF6144, FF8192\n",
+            "-G", "", "");
 }
 
 static void
@@ -959,7 +966,7 @@ main(int argc, char **argv)
     /* XXX: 'B' was used in the past but removed in 3.28,
      *      please leave some time before resuing it. */
     optstate = PL_CreateOptState(argc, argv,
-                                 "46CDFGHKM:OR:STUV:W:Ya:bc:d:fgh:m:n:op:qr:st:uvw:z");
+                                 "46CDFGHI:KM:OR:STUV:W:Ya:bc:d:fgh:m:n:op:qr:st:uvw:z");
     while ((optstatus = PL_GetNextOpt(optstate)) == PL_OPT_OK) {
         switch (optstate->option) {
             case '?':
@@ -1000,9 +1007,6 @@ main(int argc, char **argv)
 
             case 'H':
                 requireDHNamedGroups = PR_TRUE;
-                break;
-
-            case 'I': /* reserved for OCSP multi-stapling */
                 break;
 
             case 'O':
@@ -1149,13 +1153,23 @@ main(int argc, char **argv)
             case 'z':
                 enableCompression = 1;
                 break;
+
+            case 'I':
+                rv = parseGroupList(optstate->value, &enabledGroups, &enabledGroupsCount);
+                if (rv != SECSuccess) {
+                    PL_DestroyOptState(optstate);
+                    fprintf(stderr, "Bad group specified.\n");
+                    Usage(progName);
+                }
+                break;
         }
     }
 
     PL_DestroyOptState(optstate);
 
-    if (optstatus == PL_OPT_BAD)
+    if (optstatus == PL_OPT_BAD) {
         Usage(progName);
+    }
 
     if (!host || !portno) {
         fprintf(stderr, "%s: parameters -h and -p are mandatory\n", progName);
@@ -1457,7 +1471,7 @@ main(int argc, char **argv)
     if (requireDHNamedGroups) {
         rv = SSL_OptionSet(s, SSL_REQUIRE_DH_NAMED_GROUPS, PR_TRUE);
         if (rv != SECSuccess) {
-            SECU_PrintError(progName, "error enabling extended master secret");
+            SECU_PrintError(progName, "error in requiring the use of fixed finite-field DH groups");
             error = 1;
             goto done;
         }
@@ -1470,6 +1484,15 @@ main(int argc, char **argv)
         SECU_PrintError(progName, "error enabling signed cert timestamps");
         error = 1;
         goto done;
+    }
+
+    if (enabledGroups) {
+        rv = SSL_NamedGroupConfig(s, enabledGroups, enabledGroupsCount);
+        if (rv < 0) {
+            SECU_PrintError(progName, "SSL_NamedGroupConfig failed");
+            error = 1;
+            goto done;
+        }
     }
 
     serverCertAuth.dbHandle = CERT_GetDefaultCertDB();
@@ -1737,6 +1760,9 @@ done:
 
     if (s) {
         PR_Close(s);
+    }
+    if (enabledGroups) {
+        PORT_Free(enabledGroups);
     }
 
     if (NSS_IsInitialized()) {

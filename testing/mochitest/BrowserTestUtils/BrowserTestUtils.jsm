@@ -468,6 +468,8 @@ this.BrowserTestUtils = {
    *          remote:  A boolean indicating if the window should run
    *                   remote browser tabs or not. If omitted, the window
    *                   will choose the profile default state.
+   *          width: Desired width of window
+   *          height: Desired height of window
    *        }
    * @return {Promise}
    *         Resolves with the new window once it is loaded.
@@ -480,6 +482,13 @@ this.BrowserTestUtils = {
 
     if (options.private) {
       features += ",private";
+    }
+
+    if (options.width) {
+      features += ",width=" + options.width;
+    }
+    if (options.height) {
+      features += ",height=" + options.height;
     }
 
     if (options.hasOwnProperty("remote")) {
@@ -1193,6 +1202,31 @@ this.BrowserTestUtils = {
    */
   waitForNotificationBar(tabbrowser, browser, notificationValue) {
     let notificationBox = tabbrowser.getNotificationBox(browser);
+    return this.waitForNotificationInNotificationBox(notificationBox,
+                                                     notificationValue);
+  },
+
+  /**
+   * Waits for a <xul:notification> with a particular value to appear
+   * in the global <xul:notificationbox> of the given browser window.
+   *
+   * @param win (<xul:window>)
+   *        The browser window in whose global notificationbox the
+   *        notification is expected to appear.
+   * @param notificationValue (string)
+   *        The "value" of the notification, which is often used as
+   *        a unique identifier. Example: "captive-portal-detected".
+   * @return Promise
+   *        Resolves to the <xul:notification> that is being shown.
+   */
+  waitForGlobalNotificationBar(win, notificationValue) {
+    let notificationBox =
+      win.document.getElementById("high-priority-global-notificationbox");
+    return this.waitForNotificationInNotificationBox(notificationBox,
+                                                     notificationValue);
+  },
+
+  waitForNotificationInNotificationBox(notificationBox, notificationValue) {
     return new Promise((resolve) => {
       let check = (event) => {
         return event.target.value == notificationValue;

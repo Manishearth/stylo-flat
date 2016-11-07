@@ -474,18 +474,21 @@ TISInputSourceWrapper::InitByLayoutID(SInt32 aLayoutID,
       InitByInputSourceID("com.apple.keylayout.Arabic");
       break;
     case 7:
-      InitByInputSourceID("com.apple.keylayout.French");
+      InitByInputSourceID("com.apple.keylayout.ArabicPC");
       break;
     case 8:
-      InitByInputSourceID("com.apple.keylayout.Hebrew");
+      InitByInputSourceID("com.apple.keylayout.French");
       break;
     case 9:
-      InitByInputSourceID("com.apple.keylayout.Lithuanian");
+      InitByInputSourceID("com.apple.keylayout.Hebrew");
       break;
     case 10:
-      InitByInputSourceID("com.apple.keylayout.Norwegian");
+      InitByInputSourceID("com.apple.keylayout.Lithuanian");
       break;
     case 11:
+      InitByInputSourceID("com.apple.keylayout.Norwegian");
+      break;
+    case 12:
       InitByInputSourceID("com.apple.keylayout.Spanish");
       break;
     default:
@@ -2185,7 +2188,9 @@ TextInputHandler::InsertText(NSAttributedString* aAttrString,
     return;
   }
 
-  if (str.Length() != 1 || IsIMEComposing()) {
+  // If this is not caused by pressing a key or there is a composition, let's
+  // insert the text as committing a composition.
+  if (!currentKeyEvent || IsIMEComposing()) {
     InsertTextAsCommittingComposition(aAttrString, aReplacementRange);
     return;
   }

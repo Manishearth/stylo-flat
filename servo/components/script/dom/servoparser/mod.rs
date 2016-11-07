@@ -28,12 +28,13 @@ use hyper::mime::{Mime, SubLevel, TopLevel};
 use hyper_serde::Serde;
 use js::jsapi::JSTracer;
 use msg::constellation_msg::PipelineId;
-use net_traits::{AsyncResponseListener, Metadata, NetworkError};
+use net_traits::{FetchMetadata, FetchResponseListener, Metadata, NetworkError};
 use network_listener::PreInvoke;
 use profile_traits::time::{TimerMetadata, TimerMetadataFrameType};
 use profile_traits::time::{TimerMetadataReflowType, ProfilerCategory, profile};
 use script_thread::ScriptThread;
 use std::cell::Cell;
+use std::collections::VecDeque;
 use url::Url;
 use util::resource_files::read_resource_file;
 use xml5ever::tokenizer::XmlTokenizer;
@@ -51,7 +52,7 @@ pub struct ServoParser {
     /// does not correspond to a page load.
     pipeline: Option<PipelineId>,
     /// Input chunks received but not yet passed to the parser.
-    pending_input: DOMRefCell<Vec<String>>,
+    pending_input: DOMRefCell<VecDeque<String>>,
     /// The tokenizer of this parser.
     tokenizer: DOMRefCell<Tokenizer>,
     /// Whether to expect any further input from the associated network request.
@@ -78,7 +79,7 @@ impl ServoParser {
             reflector: Reflector::new(),
             document: JS::from_ref(document),
             pipeline: pipeline,
-            pending_input: DOMRefCell::new(vec![]),
+            pending_input: DOMRefCell::new(VecDeque::new()),
             tokenizer: DOMRefCell::new(tokenizer),
             last_chunk_received: Cell::new(last_chunk_state == LastChunkState::Received),
             suspended: Default::default(),
@@ -111,7 +112,7 @@ impl ServoParser {
     }
 
     fn push_input_chunk(&self, chunk: String) {
-        self.pending_input.borrow_mut().push(chunk);
+        self.pending_input.borrow_mut().push_back(chunk);
     }
 
     fn take_next_input_chunk(&self) -> Option<String> {
@@ -119,7 +120,7 @@ impl ServoParser {
         if pending_input.is_empty() {
             None
         } else {
-            Some(pending_input.remove(0))
+            pending_input.pop_front()
         }
     }
 
@@ -331,11 +332,21 @@ impl ParserContext {
     }
 }
 
-impl AsyncResponseListener for ParserContext {
-    fn headers_available(&mut self, meta_result: Result<Metadata, NetworkError>) {
+impl FetchResponseListener for ParserContext {
+    fn process_request_body(&mut self) {}
+
+    fn process_request_eof(&mut self) {}
+
+    fn process_response(&mut self,
+                        meta_result: Result<FetchMetadata, NetworkError>) {
         let mut ssl_error = None;
         let metadata = match meta_result {
-            Ok(meta) => Some(meta),
+            Ok(meta) => {
+                Some(match meta {
+                    FetchMetadata::Unfiltered(m) => m,
+                    FetchMetadata::Filtered { unsafe_, .. } => unsafe_
+                })
+            },
             Err(NetworkError::SslValidation(url, reason)) => {
                 ssl_error = Some(reason);
                 let mut meta = Metadata::default(url);
@@ -407,7 +418,7 @@ impl AsyncResponseListener for ParserContext {
         }
     }
 
-    fn data_available(&mut self, payload: Vec<u8>) {
+    fn process_response_chunk(&mut self, payload: Vec<u8>) {
         if !self.is_synthesized_document {
             // FIXME: use Vec<u8> (html5ever #34)
             let data = UTF_8.decode(&payload, DecoderTrap::Replace).unwrap();
@@ -419,7 +430,7 @@ impl AsyncResponseListener for ParserContext {
         }
     }
 
-    fn response_complete(&mut self, status: Result<(), NetworkError>) {
+    fn process_response_eof(&mut self, status: Result<(), NetworkError>) {
         let parser = match self.parser.as_ref() {
             Some(parser) => parser.root(),
             None => return,

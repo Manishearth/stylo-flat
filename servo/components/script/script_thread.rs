@@ -57,8 +57,7 @@ use dom::window::{ReflowReason, Window};
 use dom::worker::TrustedWorkerAddress;
 use euclid::Rect;
 use euclid::point::Point2D;
-use gfx_traits::LayerId;
-use hyper::header::{ContentType, Headers, HttpDate, LastModified};
+use hyper::header::{ContentType, HttpDate, LastModified};
 use hyper::header::ReferrerPolicy as ReferrerPolicyHeader;
 use hyper::method::Method;
 use hyper::mime::{Mime, SubLevel, TopLevel};
@@ -72,12 +71,11 @@ use js::jsval::UndefinedValue;
 use js::rust::Runtime;
 use layout_wrapper::ServoLayoutNode;
 use mem::heap_size_of_self_and_children;
-use msg::constellation_msg::{FrameType, LoadData, PipelineId, PipelineNamespace};
-use msg::constellation_msg::{ReferrerPolicy, WindowSizeType};
-use net_traits::{AsyncResponseTarget, CoreResourceMsg, LoadConsumer, LoadContext, Metadata, ResourceThreads};
-use net_traits::{IpcSend, LoadData as NetLoadData};
+use msg::constellation_msg::{FrameType, PipelineId, PipelineNamespace, ReferrerPolicy};
+use net_traits::{CoreResourceMsg, IpcSend, Metadata, ResourceThreads};
 use net_traits::bluetooth_thread::BluetoothMethodMsg;
 use net_traits::image_cache_thread::{ImageCacheChan, ImageCacheResult, ImageCacheThread};
+use net_traits::request::{CredentialsMode, Destination, RequestInit};
 use network_listener::NetworkListener;
 use profile_traits::mem::{self, OpaqueSender, Report, ReportKind, ReportsChan};
 use profile_traits::time::{self, ProfilerCategory, profile};
@@ -85,10 +83,10 @@ use script_layout_interface::message::{self, NewLayoutThreadInfo, ReflowQueryTyp
 use script_runtime::{CommonScriptMsg, ScriptChan, ScriptThreadEventCategory, EnqueuedPromiseCallback};
 use script_runtime::{ScriptPort, StackRootTLS, get_reports, new_rt_and_cx, PromiseJobQueue};
 use script_traits::{CompositorEvent, ConstellationControlMsg, EventResult};
-use script_traits::{InitialScriptState, MouseButton, MouseEventType, MozBrowserEvent};
+use script_traits::{InitialScriptState, LoadData, MouseButton, MouseEventType, MozBrowserEvent};
 use script_traits::{NewLayoutInfo, ScriptMsg as ConstellationMsg};
 use script_traits::{ScriptThreadFactory, TimerEvent, TimerEventRequest, TimerSource};
-use script_traits::{TouchEventType, TouchId, UntrustedNodeAddress, WindowSizeData};
+use script_traits::{TouchEventType, TouchId, UntrustedNodeAddress, WindowSizeData, WindowSizeType};
 use script_traits::CompositorEvent::{KeyEvent, MouseButtonEvent, MouseMoveEvent, ResizeEvent};
 use script_traits::CompositorEvent::{TouchEvent, TouchpadPressureEvent};
 use script_traits::webdriver_msg::WebDriverScriptCommand;
@@ -1004,8 +1002,8 @@ impl ScriptThread {
                 devtools::handle_get_children(&context, id, node_id, reply),
             DevtoolScriptControlMsg::GetLayout(id, node_id, reply) =>
                 devtools::handle_get_layout(&context, id, node_id, reply),
-            DevtoolScriptControlMsg::GetCachedMessages(pipeline_id, message_types, reply) =>
-                devtools::handle_get_cached_messages(pipeline_id, message_types, reply),
+            DevtoolScriptControlMsg::GetCachedMessages(id, message_types, reply) =>
+                devtools::handle_get_cached_messages(id, message_types, reply),
             DevtoolScriptControlMsg::ModifyAttribute(id, node_id, modifications) =>
                 devtools::handle_modify_attribute(&context, id, node_id, modifications),
             DevtoolScriptControlMsg::WantsLiveNotifications(id, to_send) => {
@@ -1015,14 +1013,14 @@ impl ScriptThread {
                 };
                 devtools::handle_wants_live_notifications(window.upcast(), to_send)
             },
-            DevtoolScriptControlMsg::SetTimelineMarkers(_pipeline_id, marker_types, reply) =>
-                devtools::handle_set_timeline_markers(&context, marker_types, reply),
-            DevtoolScriptControlMsg::DropTimelineMarkers(_pipeline_id, marker_types) =>
-                devtools::handle_drop_timeline_markers(&context, marker_types),
-            DevtoolScriptControlMsg::RequestAnimationFrame(pipeline_id, name) =>
-                devtools::handle_request_animation_frame(&context, pipeline_id, name),
-            DevtoolScriptControlMsg::Reload(pipeline_id) =>
-                devtools::handle_reload(&context, pipeline_id),
+            DevtoolScriptControlMsg::SetTimelineMarkers(id, marker_types, reply) =>
+                devtools::handle_set_timeline_markers(&context, id, marker_types, reply),
+            DevtoolScriptControlMsg::DropTimelineMarkers(id, marker_types) =>
+                devtools::handle_drop_timeline_markers(&context, id, marker_types),
+            DevtoolScriptControlMsg::RequestAnimationFrame(id, name) =>
+                devtools::handle_request_animation_frame(&context, id, name),
+            DevtoolScriptControlMsg::Reload(id) =>
+                devtools::handle_reload(&context, id),
         }
     }
 
@@ -1143,7 +1141,6 @@ impl ScriptThread {
             new_pipeline_id,
             frame_type,
             load_data,
-            paint_chan,
             pipeline_port,
             layout_to_constellation_chan,
             content_process_shutdown_chan,
@@ -1160,7 +1157,6 @@ impl ScriptThread {
             layout_pair: layout_pair,
             pipeline_port: pipeline_port,
             constellation_chan: layout_to_constellation_chan,
-            paint_chan: paint_chan,
             script_chan: self.control_chan.clone(),
             image_cache_thread: self.image_cache_thread.clone(),
             content_process_shutdown_chan: content_process_shutdown_chan,
@@ -1538,6 +1534,9 @@ impl ScriptThread {
         let node = unsafe { node.get_jsmanaged().get_for_script() };
         let window = window_from_node(node);
 
+        // Not quite the right thing - see #13865.
+        node.dirty(NodeDamage::NodeStyleDamaged);
+
         if let Some(el) = node.downcast::<Element>() {
             if &*window.GetComputedStyle(el, None).Display() == "none" {
                 return;
@@ -1729,7 +1728,6 @@ impl ScriptThread {
         });
 
         let loader = DocumentLoader::new_with_threads(self.resource_threads.clone(),
-                                                      Some(browsing_context.pipeline_id()),
                                                       Some(incomplete.url.clone()));
 
         let is_html_document = match metadata.content_type {
@@ -1883,10 +1881,7 @@ impl ScriptThread {
         let point = Point2D::new(rect.origin.x.to_nearest_px() as f32,
                                  rect.origin.y.to_nearest_px() as f32);
 
-        let message = ConstellationMsg::ScrollFragmentPoint(pipeline_id,
-                                                            LayerId::null(),
-                                                            point,
-                                                            false);
+        let message = ConstellationMsg::ScrollFragmentPoint(pipeline_id, point, false);
         self.constellation_chan.send(message).unwrap();
     }
 
@@ -2104,6 +2099,11 @@ impl ScriptThread {
                                        0i32);
             uievent.upcast::<Event>().fire(window.upcast());
         }
+
+        // https://html.spec.whatwg.org/multipage/#event-loop-processing-model
+        // Step 7.7 - evaluate media queries and report changes
+        // Since we have resized, we need to re-evaluate MQLs
+        window.evaluate_media_queries_and_report_changes();
     }
 
     /// Initiate a non-blocking fetch for a specified resource. Stores the InProgressLoad
@@ -2119,30 +2119,29 @@ impl ScriptThread {
             wrapper: None,
         };
         ROUTER.add_route(action_receiver.to_opaque(), box move |message| {
-            listener.notify_action(message.to().unwrap());
+            listener.notify_fetch(message.to().unwrap());
         });
-        let response_target = AsyncResponseTarget {
-            sender: action_sender,
-        };
 
         if load_data.url.scheme() == "javascript" {
             load_data.url = Url::parse("about:blank").unwrap();
         }
 
-        self.resource_threads.send(CoreResourceMsg::Load(NetLoadData {
-            context: LoadContext::Browsing,
-            url: load_data.url,
+        let request = RequestInit {
+            url: load_data.url.clone(),
             method: load_data.method,
-            headers: Headers::new(),
-            preserved_headers: load_data.headers,
-            data: load_data.data,
-            cors: None,
+            destination: Destination::Document,
+            credentials_mode: CredentialsMode::Include,
+            use_url_credentials: true,
+            origin: load_data.url,
             pipeline_id: Some(id),
-            credentials_flag: true,
+            referrer_url: load_data.referrer_url,
             referrer_policy: load_data.referrer_policy,
-            referrer_url: load_data.referrer_url
-        }, LoadConsumer::Listener(response_target), None)).unwrap();
+            headers: load_data.headers,
+            body: load_data.data,
+            .. RequestInit::default()
+        };
 
+        self.resource_threads.send(CoreResourceMsg::Fetch(request, action_sender)).unwrap();
         self.incomplete_loads.borrow_mut().push(incomplete);
     }
 

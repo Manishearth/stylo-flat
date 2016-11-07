@@ -1217,6 +1217,16 @@ Range::sign(TempAllocator& alloc, const Range* op)
                             0);
 }
 
+Range*
+Range::NaNToZero(TempAllocator& alloc, const Range *op)
+{
+    Range* copy = new(alloc) Range(*op);
+    if (copy->canBeNaN())
+        copy->max_exponent_ = Range::IncludesInfinity;
+    copy->refineToExcludeNegativeZero();
+    return copy;
+}
+
 bool
 Range::negativeZeroMul(const Range* lhs, const Range* rhs)
 {
@@ -1570,10 +1580,18 @@ MMod::computeRange(TempAllocator& alloc)
 
     // If both operands are non-negative integers, we can optimize this to an
     // unsigned mod.
-    if (specialization() == MIRType::Int32 && lhs.lower() >= 0 && rhs.lower() > 0 &&
-        !lhs.canHaveFractionalPart() && !rhs.canHaveFractionalPart())
-    {
-        unsigned_ = true;
+    if (specialization() == MIRType::Int32 && rhs.lower() > 0) {
+        bool hasDoubles = lhs.lower() < 0 || lhs.canHaveFractionalPart() ||
+            rhs.canHaveFractionalPart();
+        // It is not possible to check that lhs.lower() >= 0, since the range
+        // of a ursh with rhs a 0 constant is wrapped around the int32 range in
+        // Range::Range(). However, IsUint32Type() will only return true for
+        // nodes that lie in the range [0, UINT32_MAX].
+        bool hasUint32s = IsUint32Type(getOperand(0)) &&
+            getOperand(1)->type() == MIRType::Int32 &&
+            (IsUint32Type(getOperand(1)) || getOperand(1)->isConstant());
+        if (!hasDoubles || hasUint32s)
+            unsigned_ = true;
     }
 
     // For unsigned mod, we have to convert both operands to unsigned.
@@ -1872,6 +1890,13 @@ MRandom::computeRange(TempAllocator& alloc)
     r->refineToExcludeNegativeZero();
 
     setRange(r);
+}
+
+void
+MNaNToZero::computeRange(TempAllocator& alloc)
+{
+    Range other(input());
+    setRange(Range::NaNToZero(alloc, &other));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -3464,6 +3489,17 @@ MBinaryBitwiseInstruction::collectRangeInfoPreTrunc()
     {
         maskMatchesLeftRange = true;
     }
+}
+
+void
+MNaNToZero::collectRangeInfoPreTrunc()
+{
+    Range inputRange(input());
+
+    if (!inputRange.canBeNaN())
+        operandIsNeverNaN_ = true;
+    if (!inputRange.canBeNegativeZero())
+        operandIsNeverNegativeZero_ = true;
 }
 
 bool

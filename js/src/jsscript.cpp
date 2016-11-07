@@ -358,10 +358,7 @@ js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope, HandleScrip
             if (!comp->creationOptions().cloneSingletons() ||
                 !comp->behaviors().getSingletonsAsTemplates())
             {
-                JS_ReportErrorASCII(cx,
-                                    "Can't serialize a run-once non-function script "
-                                    "when we're not doing singleton cloning");
-                return false;
+                return xdr->fail(JS::TranscodeResult_Failure_RunOnceNotSupported);
             }
         }
     }
@@ -795,8 +792,7 @@ js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope, HandleScrip
                     funEnclosingScope = function->nonLazyScript()->enclosingScope();
                 } else {
                     MOZ_ASSERT(function->isAsmJSNative());
-                    JS_ReportErrorASCII(cx, "AsmJS modules are not yet supported in XDR serialization.");
-                    return false;
+                    return xdr->fail(JS::TranscodeResult_Failure_AsmJSNotSupported);
                 }
 
                 funEnclosingScopeIndex = FindScopeIndex(script, *funEnclosingScope);
@@ -831,7 +827,7 @@ js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope, HandleScrip
 
           default: {
             MOZ_ASSERT(false, "Unknown class kind.");
-            return false;
+            return xdr->fail(JS::TranscodeResult_Failure_UnknownClassKind);
           }
         }
     }
@@ -2331,16 +2327,25 @@ js::FreeScriptData(JSRuntime* rt, AutoLockForExclusiveAccess& lock)
  * The following static assertions check JSScript::data's alignment properties.
  */
 
-#define KEEPS_JSVAL_ALIGNMENT(T) \
-    (JS_ALIGNMENT_OF(JS::Value) % JS_ALIGNMENT_OF(T) == 0 && \
-     sizeof(T) % sizeof(JS::Value) == 0)
+template<class T>
+constexpr bool
+KeepsValueAlignment() {
+    return alignof(JS::Value) % alignof(T) == 0 &&
+           sizeof(T) % sizeof(JS::Value) == 0;
+}
 
-#define HAS_JSVAL_ALIGNMENT(T) \
-    (JS_ALIGNMENT_OF(JS::Value) == JS_ALIGNMENT_OF(T) && \
-     sizeof(T) == sizeof(JS::Value))
+template<class T>
+constexpr bool
+HasValueAlignment() {
+    return alignof(JS::Value) == alignof(T) &&
+           sizeof(T) == sizeof(JS::Value);
+}
 
-#define NO_PADDING_BETWEEN_ENTRIES(T1, T2) \
-    (JS_ALIGNMENT_OF(T1) % JS_ALIGNMENT_OF(T2) == 0)
+template<class T1, class T2>
+constexpr bool
+NoPaddingBetweenEntries() {
+    return alignof(T1) % alignof(T2) == 0;
+}
 
 /*
  * These assertions ensure that there is no padding between the array headers,
@@ -2348,24 +2353,24 @@ js::FreeScriptData(JSRuntime* rt, AutoLockForExclusiveAccess& lock)
  * Value-aligned.  (There is an assumption that |data| itself is Value-aligned;
  * we check this below).
  */
-JS_STATIC_ASSERT(KEEPS_JSVAL_ALIGNMENT(ConstArray));
-JS_STATIC_ASSERT(KEEPS_JSVAL_ALIGNMENT(ObjectArray));       /* there are two of these */
-JS_STATIC_ASSERT(KEEPS_JSVAL_ALIGNMENT(TryNoteArray));
-JS_STATIC_ASSERT(KEEPS_JSVAL_ALIGNMENT(ScopeNoteArray));
+JS_STATIC_ASSERT(KeepsValueAlignment<ConstArray>());
+JS_STATIC_ASSERT(KeepsValueAlignment<ObjectArray>());       /* there are two of these */
+JS_STATIC_ASSERT(KeepsValueAlignment<TryNoteArray>());
+JS_STATIC_ASSERT(KeepsValueAlignment<ScopeNoteArray>());
 
 /* These assertions ensure there is no padding required between array elements. */
-JS_STATIC_ASSERT(HAS_JSVAL_ALIGNMENT(GCPtrValue));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(GCPtrValue, GCPtrObject));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(GCPtrObject, GCPtrObject));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(GCPtrObject, JSTryNote));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(JSTryNote, uint32_t));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(uint32_t, uint32_t));
+JS_STATIC_ASSERT(HasValueAlignment<GCPtrValue>());
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<GCPtrValue, GCPtrObject>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<GCPtrObject, GCPtrObject>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<GCPtrObject, JSTryNote>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<JSTryNote, uint32_t>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<uint32_t, uint32_t>()));
 
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(GCPtrValue, ScopeNote));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(ScopeNote, ScopeNote));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(JSTryNote, ScopeNote));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(GCPtrObject, ScopeNote));
-JS_STATIC_ASSERT(NO_PADDING_BETWEEN_ENTRIES(ScopeNote, uint32_t));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<GCPtrValue, ScopeNote>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<ScopeNote, ScopeNote>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<JSTryNote, ScopeNote>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<GCPtrObject, ScopeNote>()));
+JS_STATIC_ASSERT((NoPaddingBetweenEntries<ScopeNote, uint32_t>()));
 
 static inline size_t
 ScriptDataSize(uint32_t nscopes, uint32_t nconsts, uint32_t nobjects,
@@ -2610,6 +2615,7 @@ JSScript::initFromFunctionBox(ExclusiveContext* cx, HandleScript script,
 
     script->isGeneratorExp_ = funbox->isGenexpLambda;
     script->setGeneratorKind(funbox->generatorKind());
+    script->setAsyncKind(funbox->asyncKind());
 
     PositionalFormalParameterIter fi(script);
     while (fi && !fi.closedOver())
@@ -3099,6 +3105,8 @@ Rebase(JSScript* dst, JSScript* src, T* srcp)
 static JSObject*
 CloneInnerInterpretedFunction(JSContext* cx, HandleScope enclosingScope, HandleFunction srcFun)
 {
+    /* async function should not appear as inner function. */
+    MOZ_ASSERT(!srcFun->isAsync());
     /* NB: Keep this in sync with XDRInterpretedFunction. */
     RootedObject cloneProto(cx);
     if (srcFun->isStarGenerator()) {
@@ -3267,6 +3275,7 @@ js::detail::CopyScript(JSContext* cx, HandleScript src, HandleScript dst,
     dst->isDerivedClassConstructor_ = src->isDerivedClassConstructor();
     dst->needsHomeObject_ = src->needsHomeObject();
     dst->isDefaultClassConstructor_ = src->isDefaultClassConstructor();
+    dst->isAsync_ = src->asyncKind() == AsyncFunction;
 
     if (nconsts != 0) {
         GCPtrValue* vector = Rebase<GCPtrValue>(dst, src, src->consts()->vector);
@@ -3999,6 +4008,7 @@ LazyScript::Create(ExclusiveContext* cx, HandleFunction fun,
     p.version = version;
     p.shouldDeclareArguments = false;
     p.hasThisBinding = false;
+    p.isAsync = false;
     p.numClosedOverBindings = closedOverBindings.length();
     p.numInnerFunctions = innerFunctions.length();
     p.generatorKindBits = GeneratorKindAsBits(NotGenerator);

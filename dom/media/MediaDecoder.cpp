@@ -997,9 +997,6 @@ MediaDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
   mInfo = aInfo.forget();
 
   Invalidate();
-  if (aEventVisibility != MediaDecoderEventVisibility::Suppressed) {
-    mOwner->FirstFrameLoaded();
-  }
 
   // This can run cache callbacks.
   mResource->EnsureCacheUpToDate();
@@ -1015,6 +1012,12 @@ MediaDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
   // Run NotifySuspendedStatusChanged now to give us a chance to notice
   // that autoplay should run.
   NotifySuspendedStatusChanged();
+
+  // mOwner->FirstFrameLoaded() might call us back. Put it at the bottom of
+  // this function to avoid unexpected shutdown from reentrant calls.
+  if (aEventVisibility != MediaDecoderEventVisibility::Suppressed) {
+    mOwner->FirstFrameLoaded();
+  }
 }
 
 void
@@ -1736,14 +1739,6 @@ MediaDecoder::IsWebMEnabled()
   return Preferences::GetBool("media.webm.enabled");
 }
 
-#ifdef MOZ_OMX_DECODER
-bool
-MediaDecoder::IsOmxEnabled()
-{
-  return Preferences::GetBool("media.omx.enabled", false);
-}
-#endif
-
 #ifdef MOZ_ANDROID_OMX
 bool
 MediaDecoder::IsAndroidMediaPluginEnabled()
@@ -1895,14 +1890,16 @@ MediaDecoder::DumpDebugInfo()
 {
   MOZ_ASSERT(!IsShutdown());
   DUMP_LOG("metadata: channels=%u rate=%u hasAudio=%d hasVideo=%d, "
-           "state: mPlayState=%s mIsDormant=%d",
+           "state: mPlayState=%s mIsDormant=%d, mdsm=%p",
            mInfo ? mInfo->mAudio.mChannels : 0, mInfo ? mInfo->mAudio.mRate : 0,
            mInfo ? mInfo->HasAudio() : 0, mInfo ? mInfo->HasVideo() : 0,
-           PlayStateStr(), mIsDormant);
+           PlayStateStr(), mIsDormant, GetStateMachine());
 
   nsString str;
   GetMozDebugReaderData(str);
-  DUMP_LOG("reader data:\n%s", NS_ConvertUTF16toUTF8(str).get());
+  if (!str.IsEmpty()) {
+    DUMP_LOG("reader data:\n%s", NS_ConvertUTF16toUTF8(str).get());
+  }
 
   if (GetStateMachine()) {
     GetStateMachine()->DumpDebugInfo();

@@ -18,7 +18,7 @@
 
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
-#include "mozilla/layers/SharedBufferManagerChild.h"
+#include "mozilla/dom/VideoDecoderManagerChild.h"
 
 #include "prlink.h"
 
@@ -803,6 +803,9 @@ NS_InitMinimalXPCOM()
 
   AbstractThread::InitStatics();
   SharedThreadPool::InitStatics();
+  mozilla::Telemetry::Init();
+  mozilla::HangMonitor::Startup();
+  mozilla::BackgroundHangMonitor::Startup();
 
   return NS_OK;
 }
@@ -895,6 +898,7 @@ ShutdownXPCOM(nsIServiceManager* aServMgr)
     // are triggered by the NS_XPCOM_SHUTDOWN_OBSERVER_ID notification.
     NS_ProcessPendingEvents(thread);
     gfxPlatform::ShutdownLayersIPC();
+    mozilla::dom::VideoDecoderManagerChild::Shutdown();
 
     mozilla::scache::StartupCache::DeleteSingleton();
     if (observerService)

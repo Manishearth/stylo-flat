@@ -202,22 +202,26 @@ template <>
 class ZoneCellIter<TenuredCell> {
     ArenaIter arenaIter;
     ArenaCellIterImpl cellIter;
-    JS::AutoAssertNoAlloc noAlloc;
+    mozilla::Maybe<JS::AutoAssertNoGC> nogc;
 
   protected:
     // For use when a subclass wants to insert some setup before init().
     ZoneCellIter() {}
 
     void init(JS::Zone* zone, AllocKind kind) {
+        MOZ_ASSERT_IF(IsNurseryAllocable(kind),
+                      zone->runtimeFromAnyThread()->gc.nursery.isEmpty());
+        initForTenuredIteration(zone, kind);
+    }
+
+    void initForTenuredIteration(JS::Zone* zone, AllocKind kind) {
         JSRuntime* rt = zone->runtimeFromAnyThread();
-        MOZ_ASSERT(zone);
-        MOZ_ASSERT_IF(IsNurseryAllocable(kind), rt->gc.nursery.isEmpty());
 
         // If called from outside a GC, ensure that the heap is in a state
         // that allows us to iterate.
         if (!rt->isHeapBusy()) {
             // Assert that no GCs can occur while a ZoneCellIter is live.
-            noAlloc.disallowAlloc(rt);
+            nogc.emplace(rt);
         }
 
         // We have a single-threaded runtime, so there's no need to protect
@@ -344,6 +348,17 @@ class ZoneCellIter : public ZoneCellIter<TenuredCell> {
     GCType* get() const { return ZoneCellIter<TenuredCell>::get<GCType>(); }
     operator GCType*() const { return get(); }
     GCType* operator ->() const { return get(); }
+};
+
+class GrayObjectIter : public ZoneCellIter<TenuredCell> {
+  public:
+    explicit GrayObjectIter(JS::Zone* zone, AllocKind kind) : ZoneCellIter<TenuredCell>() {
+        initForTenuredIteration(zone, kind);
+    }
+
+    JSObject* get() const { return ZoneCellIter<TenuredCell>::get<JSObject>(); }
+    operator JSObject*() const { return get(); }
+    JSObject* operator ->() const { return get(); }
 };
 
 class GCZonesIter

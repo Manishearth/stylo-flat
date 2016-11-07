@@ -25,8 +25,8 @@ interface HTMLSelectElement : HTMLElement {
   //setter void (unsigned long index, HTMLOptionElement? option);
 
   //readonly attribute HTMLCollection selectedOptions;
-  //         attribute long selectedIndex;
-  //         attribute DOMString value;
+  attribute long selectedIndex;
+  attribute DOMString value;
 
   //readonly attribute boolean willValidate;
   readonly attribute ValidityState validity;

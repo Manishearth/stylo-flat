@@ -761,7 +761,7 @@ add_task(function* test_select_input_text_password() {
      "context-selectall",   true,
      "---",                 null,
      "spell-check-enabled", true,
-     //spell checker is shown on input[type="password"] on this testcase
+     // spell checker is shown on input[type="password"] on this testcase
      "spell-dictionaries",  true,
          ["spell-check-dictionary-en-US", true,
           "---",                          null,
@@ -876,8 +876,6 @@ add_task(function* test_input_spell_false() {
      "context-delete",      false,
      "---",                 null,
      "context-selectall",   true,
-     "---",                 null,
-     "spell-add-dictionaries-main",  true,
     ]
   );
 });

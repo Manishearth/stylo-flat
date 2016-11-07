@@ -427,12 +427,13 @@ var Bookmarks = Object.freeze({
       item = yield removeBookmark(item, options);
 
       // Notify onItemRemoved to listeners.
+      let { source = Bookmarks.SOURCES.DEFAULT } = options;
       let observers = PlacesUtils.bookmarks.getObservers();
       let uri = item.hasOwnProperty("url") ? PlacesUtils.toURI(item.url) : null;
       notify(observers, "onItemRemoved", [ item._id, item._parentId, item.index,
                                            item.type, uri, item.guid,
                                            item.parentGuid,
-                                           removeInfo.source ]);
+                                           source ]);
 
       let isUntagging = item._grandParentId == PlacesUtils.tagsFolderId;
       if (isUntagging) {
@@ -441,7 +442,7 @@ var Bookmarks = Object.freeze({
                                                PlacesUtils.toPRTime(entry.lastModified),
                                                entry.type, entry._parentId,
                                                entry.guid, entry.parentGuid,
-                                               "", removeInfo.source ]);
+                                               "", source ]);
         }
       }
 
@@ -778,7 +779,7 @@ var Bookmarks = Object.freeze({
   },
 });
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Globals.
 
 /**
@@ -799,7 +800,7 @@ function notify(observers, notification, args) {
   }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Update implementation.
 
 function updateBookmark(info, item, newParent) {
@@ -884,7 +885,7 @@ function updateBookmark(info, item, newParent) {
   }));
 }
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Insert implementation.
 
 function insertBookmark(item, parent) {
@@ -939,7 +940,7 @@ function insertBookmark(item, parent) {
   }));
 }
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Query implementation.
 
 function queryBookmarks(info) {
@@ -989,7 +990,7 @@ function queryBookmarks(info) {
 }
 
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Fetch implementation.
 
 function fetchBookmark(info) {
@@ -1101,7 +1102,7 @@ function fetchBookmarksByParent(info) {
   }));
 }
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Remove implementation.
 
 function removeBookmark(item, options) {
@@ -1150,7 +1151,7 @@ function removeBookmark(item, options) {
   }));
 }
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Reorder implementation.
 
 function reorderChildren(parent, orderedChildrenGuids) {
@@ -1161,15 +1162,28 @@ function reorderChildren(parent, orderedChildrenGuids) {
       if (!children.length)
         return undefined;
 
+      // Build a map of GUIDs to indices for fast lookups in the comparator
+      // function.
+      let guidIndices = new Map();
+      for (let i = 0; i < orderedChildrenGuids.length; ++i) {
+        let guid = orderedChildrenGuids[i];
+        guidIndices.set(guid, i);
+      }
+
       // Reorder the children array according to the specified order, provided
       // GUIDs come first, others are appended in somehow random order.
       children.sort((a, b) => {
-        let i = orderedChildrenGuids.indexOf(a.guid);
-        let j = orderedChildrenGuids.indexOf(b.guid);
         // This works provided fetchBookmarksByParent returns sorted children.
-        if (i == -1 && j == -1)
+        if (!guidIndices.has(a.guid) && !guidIndices.has(b.guid)) {
           return 0;
-        return (i != -1 && j != -1 && i < j) || (i != -1 && j == -1) ? -1 : 1;
+        }
+        if (!guidIndices.has(a.guid)) {
+          return 1;
+        }
+        if (!guidIndices.has(b.guid)) {
+          return -1;
+        }
+        return guidIndices.get(a.guid) < guidIndices.get(b.guid) ? -1 : 1;
        });
 
       // Update the bookmarks position now.  If any unknown guid have been
@@ -1223,7 +1237,7 @@ function reorderChildren(parent, orderedChildrenGuids) {
   );
 }
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Helpers.
 
 /**

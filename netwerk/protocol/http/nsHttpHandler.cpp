@@ -166,6 +166,7 @@ nsHttpHandler::nsHttpHandler()
     , mReferrerLevel(0xff) // by default we always send a referrer
     , mSpoofReferrerSource(false)
     , mReferrerTrimmingPolicy(0)
+    , mReferrerXOriginTrimmingPolicy(0)
     , mReferrerXOriginPolicy(0)
     , mFastFallbackToIPv4(false)
     , mProxyPipelining(true)
@@ -202,7 +203,6 @@ nsHttpHandler::nsHttpHandler()
     , mCompatFirefoxEnabled(false)
     , mUserAgentIsDirty(true)
     , mPromptTempRedirect(true)
-    , mSendSecureXSiteReferrer(true)
     , mEnablePersistentHttpsCaching(false)
     , mDoNotTrackEnabled(false)
     , mSafeHintEnabled(false)
@@ -242,6 +242,7 @@ nsHttpHandler::nsHttpHandler()
     , mEnforceH1Framing(FRAMECHECK_BARELY)
     , mKeepEmptyResponseHeadersAsEmtpyString(false)
     , mDefaultHpackBuffer(4096)
+    , mMaxHttpResponseHeaderSize(393216)
 {
     LOG(("Creating nsHttpHandler [this=%p].\n", this));
 
@@ -313,12 +314,6 @@ nsHttpHandler::Init()
         PrefsChanged(prefBranch, nullptr);
     }
 
-    rv = Preferences::AddBoolVarCache(&mPackagedAppsEnabled,
-        "network.http.enable-packaged-apps", false);
-    if (NS_FAILED(rv)) {
-        mPackagedAppsEnabled = false;
-    }
-
     nsHttpChannelAuthProvider::InitializePrefs();
 
     mMisc.AssignLiteral("rv:" MOZILLA_UAVERSION);
@@ -336,7 +331,7 @@ nsHttpHandler::Init()
           appInfo->GetName(mAppName);
         }
         appInfo->GetVersion(mAppVersion);
-        mAppName.StripChars(" ()<>@,;:\\\"/[]?={}");
+        mAppName.StripChars(R"( ()<>@,;:\"/[]?={})");
     } else {
         mAppVersion.AssignLiteral(MOZ_APP_UA_VERSION);
     }
@@ -1085,6 +1080,12 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mReferrerTrimmingPolicy = (uint8_t) clamped(val, 0, 2);
     }
 
+    if (PREF_CHANGED(HTTP_PREF("referer.XOriginTrimmingPolicy"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("referer.XOriginTrimmingPolicy"), &val);
+        if (NS_SUCCEEDED(rv))
+            mReferrerXOriginTrimmingPolicy = (uint8_t) clamped(val, 0, 2);
+    }
+
     if (PREF_CHANGED(HTTP_PREF("referer.XOriginPolicy"))) {
         rv = prefs->GetIntPref(HTTP_PREF("referer.XOriginPolicy"), &val);
         if (NS_SUCCEEDED(rv))
@@ -1228,12 +1229,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         rv = prefs->GetIntPref(HTTP_PREF("qos"), &val);
         if (NS_SUCCEEDED(rv))
             mQoSBits = (uint8_t) clamped(val, 0, 0xff);
-    }
-
-    if (PREF_CHANGED(HTTP_PREF("sendSecureXSiteReferrer"))) {
-        rv = prefs->GetBoolPref(HTTP_PREF("sendSecureXSiteReferrer"), &cVar);
-        if (NS_SUCCEEDED(rv))
-            mSendSecureXSiteReferrer = cVar;
     }
 
     if (PREF_CHANGED(HTTP_PREF("accept.default"))) {
@@ -1468,6 +1463,13 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         if (NS_SUCCEEDED(rv) && cVar) {
             if (mConnMgr)
                 mConnMgr->PrintDiagnostics();
+        }
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("max_response_header_size"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("max_response_header_size"), &val);
+        if (NS_SUCCEEDED(rv)) {
+            mMaxHttpResponseHeaderSize = val;
         }
     }
     //
@@ -2301,7 +2303,7 @@ nsHttpHandler::SpeculativeConnectInternal(nsIURI *aURI,
       neckoOriginAttributes.InheritFromDocShellToNecko(docshellOriginAttributes);
     }
 
-    nsHttpConnectionInfo *ci =
+    auto *ci =
         new nsHttpConnectionInfo(host, port, EmptyCString(), username, nullptr,
                                  neckoOriginAttributes, usingSSL);
     ci->SetAnonymous(anonymous);

@@ -22,7 +22,6 @@
 #include "mozilla/net/RtspChannelParent.h"
 #endif
 #include "mozilla/net/DNSRequestParent.h"
-#include "mozilla/net/RemoteOpenFileParent.h"
 #include "mozilla/net/ChannelDiverterParent.h"
 #include "mozilla/net/IPCTransportProvider.h"
 #include "mozilla/dom/ContentParent.h"
@@ -31,22 +30,18 @@
 #include "mozilla/dom/network/TCPSocketParent.h"
 #include "mozilla/dom/network/TCPServerSocketParent.h"
 #include "mozilla/dom/network/UDPSocketParent.h"
-#include "mozilla/ipc/URIUtils.h"
 #include "mozilla/LoadContext.h"
 #include "mozilla/AppProcessChecker.h"
 #include "nsPrintfCString.h"
 #include "nsHTMLDNSPrefetch.h"
 #include "nsIAppsService.h"
 #include "nsEscape.h"
-#include "RemoteOpenFileParent.h"
 #include "SerializedLoadContext.h"
 #include "nsAuthInformationHolder.h"
 #include "nsIAuthPromptCallback.h"
 #include "nsPrincipal.h"
-#include "nsIOService.h"
 #include "nsINetworkPredictor.h"
 #include "nsINetworkPredictorVerifier.h"
-#include "mozilla/net/OfflineObserver.h"
 #include "nsISpeculativeConnect.h"
 
 using mozilla::DocShellOriginAttributes;
@@ -74,8 +69,6 @@ NeckoParent::NeckoParent()
   nsCOMPtr<nsIProtocolHandler> proto =
     do_GetService("@mozilla.org/network/protocol;1?name=http");
 
-  mObserver = new OfflineObserver(this);
-
   // only register once--we will have multiple NeckoParents if there are
   // multiple child processes.
   static bool registeredBool = false;
@@ -88,9 +81,6 @@ NeckoParent::NeckoParent()
 
 NeckoParent::~NeckoParent()
 {
-  if (mObserver) {
-    mObserver->RemoveObserver();
-  }
 }
 
 static PBOverrideStatus
@@ -121,16 +111,32 @@ NeckoParent::GetValidatedAppInfo(const SerializedLoadContext& aSerialized,
                                  PContentParent* aContent,
                                  DocShellOriginAttributes& aAttrs)
 {
-  if (UsingNeckoIPCSecurity()) {
-    if (!aSerialized.IsNotNull()) {
+  if (!aSerialized.IsNotNull()) {
+    if (UsingNeckoIPCSecurity()) {
       CrashWithReason("GetValidatedAppInfo | SerializedLoadContext from child is null");
       return "SerializedLoadContext from child is null";
     }
+
+    // If serialized is null, we cannot validate anything. We have to assume
+    // that this requests comes from a SystemPrincipal.
+    aAttrs = DocShellOriginAttributes(NECKO_NO_APP_ID, false);
+    return nullptr;
+  }
+
+  nsTArray<TabContext> contextArray =
+    static_cast<ContentParent*>(aContent)->GetManagedTabContext();
+  if (contextArray.IsEmpty()) {
+    if (UsingNeckoIPCSecurity()) {
+      CrashWithReason("GetValidatedAppInfo | ContentParent does not have any PBrowsers");
+      return "ContentParent does not have any PBrowsers";
+    }
+
+    // We are running xpcshell tests
+    aAttrs = aSerialized.mOriginAttributes;
+    return nullptr;
   }
 
   nsAutoCString debugString;
-  nsTArray<TabContext> contextArray =
-    static_cast<ContentParent*>(aContent)->GetManagedTabContext();
   for (uint32_t i = 0; i < contextArray.Length(); i++) {
     TabContext tabContext = contextArray[i];
     uint32_t appId = tabContext.OwnOrContainingAppId();
@@ -173,31 +179,16 @@ NeckoParent::GetValidatedAppInfo(const SerializedLoadContext& aSerialized,
     return nullptr;
   }
 
-  if (contextArray.Length() != 0) {
-    nsAutoCString errorString;
-    errorString.Append("GetValidatedAppInfo | App does not have permission -");
-    errorString.Append(debugString);
+  nsAutoCString errorString;
+  errorString.Append("GetValidatedAppInfo | App does not have permission -");
+  errorString.Append(debugString);
 
-    // Leak the buffer on the heap to make sure that it lives long enough, as
-    // MOZ_CRASH_ANNOTATE expects the pointer passed to it to live to the end of
-    // the program.
-    char * error = strdup(errorString.BeginReading());
-    CrashWithReason(error);
-    return "App does not have permission";
-  }
-
-  if (!UsingNeckoIPCSecurity()) {
-    // We are running xpcshell tests
-    if (aSerialized.IsNotNull()) {
-      aAttrs = aSerialized.mOriginAttributes;
-    } else {
-      aAttrs = DocShellOriginAttributes(NECKO_NO_APP_ID, false);
-    }
-    return nullptr;
-  }
-
-  CrashWithReason("GetValidatedAppInfo | ContentParent does not have any PBrowsers");
-  return "ContentParent does not have any PBrowsers";
+  // Leak the buffer on the heap to make sure that it lives long enough, as
+  // MOZ_CRASH_ANNOTATE expects the pointer passed to it to live to the end of
+  // the program.
+  char * error = strdup(errorString.BeginReading());
+  CrashWithReason(error);
+  return "App does not have permission";
 }
 
 const char *
@@ -611,85 +602,6 @@ NeckoParent::DeallocPDNSRequestParent(PDNSRequestParent* aParent)
   return true;
 }
 
-PRemoteOpenFileParent*
-NeckoParent::AllocPRemoteOpenFileParent(const SerializedLoadContext& aSerialized,
-                                        const URIParams& aURI,
-                                        const OptionalURIParams& aAppURI)
-{
-  nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
-  nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(uri);
-  if (!fileURL) {
-    return nullptr;
-  }
-
-  // security checks
-  if (UsingNeckoIPCSecurity()) {
-    nsCOMPtr<nsIAppsService> appsService =
-      do_GetService(APPS_SERVICE_CONTRACTID);
-    if (!appsService) {
-      return nullptr;
-    }
-    bool haveValidBrowser = false;
-    bool hasManage = false;
-    nsCOMPtr<mozIApplication> mozApp;
-    nsTArray<TabContext> contextArray =
-      static_cast<ContentParent*>(Manager())->GetManagedTabContext();
-    for (uint32_t i = 0; i < contextArray.Length(); i++) {
-      TabContext tabContext = contextArray[i];
-      uint32_t appId = tabContext.OwnOrContainingAppId();
-      // Note: this enforces that SerializedLoadContext.appID is one of the apps
-      // in the child process, but there's currently no way to verify the
-      // request is not from a different app in that process.
-      if (appId == aSerialized.mOriginAttributes.mAppId) {
-        nsresult rv = appsService->GetAppByLocalId(appId, getter_AddRefs(mozApp));
-        if (NS_FAILED(rv) || !mozApp) {
-          break;
-        }
-        rv = mozApp->HasPermission("webapps-manage", &hasManage);
-        if (NS_FAILED(rv)) {
-          break;
-        }
-        haveValidBrowser = true;
-        break;
-      }
-    }
-
-    nsCOMPtr<nsIURI> appUri = DeserializeURI(aAppURI);
-
-    if (!haveValidBrowser) {
-      // Extension loads come from chrome and have no valid browser, so we check
-      // for these early on.
-      bool fromExtension = false;
-      if (NS_SUCCEEDED(appsService->IsExtensionResource(appUri, &fromExtension)) &&
-          fromExtension) {
-        RemoteOpenFileParent* parent = new RemoteOpenFileParent(fileURL);
-        return parent;
-      }
-      return nullptr;
-    }
-  }
-
-  RemoteOpenFileParent* parent = new RemoteOpenFileParent(fileURL);
-  return parent;
-}
-
-bool
-NeckoParent::RecvPRemoteOpenFileConstructor(
-                PRemoteOpenFileParent* aActor,
-                const SerializedLoadContext& aSerialized,
-                const URIParams& aFileURI,
-                const OptionalURIParams& aAppURI)
-{
-  return static_cast<RemoteOpenFileParent*>(aActor)->OpenSendCloseDelete();
-}
-
-bool
-NeckoParent::DeallocPRemoteOpenFileParent(PRemoteOpenFileParent* actor)
-{
-  delete actor;
-  return true;
-}
-
 bool
 NeckoParent::RecvSpeculativeConnect(const URIParams& aURI, const bool& aAnonymous)
 {
@@ -930,57 +842,6 @@ NeckoParent::RecvPredReset()
 
   predictor->Reset();
   return true;
-}
-
-nsresult
-NeckoParent::OfflineNotification(nsISupports *aSubject)
-{
-  nsCOMPtr<nsIAppOfflineInfo> info(do_QueryInterface(aSubject));
-  if (!info) {
-    return NS_OK;
-  }
-
-  uint32_t targetAppId = NECKO_UNKNOWN_APP_ID;
-  info->GetAppId(&targetAppId);
-
-  nsTArray<TabContext> contextArray =
-      static_cast<ContentParent*>(Manager())->GetManagedTabContext();
-  for (uint32_t i = 0; i < contextArray.Length(); ++i) {
-    TabContext tabContext = contextArray[i];
-    uint32_t appId = tabContext.OwnOrContainingAppId();
-
-    if (appId == targetAppId) {
-      if (gIOService) {
-        bool offline = false;
-        nsresult rv = gIOService->IsAppOffline(appId, &offline);
-        if (NS_FAILED(rv)) {
-          printf_stderr("Unexpected - NeckoParent: "
-                        "appId not found by isAppOffline(): %u\n", appId);
-          break;
-        }
-        if (!SendAppOfflineStatus(appId, offline)) {
-          printf_stderr("NeckoParent: "
-                        "SendAppOfflineStatus failed for appId: %u\n", appId);
-        }
-        // Once we found the targetAppId, we don't need to continue
-        break;
-      }
-    }
-
-  }
-
-  // XPCShells don't have any TabParents
-  // Just send the ipdl message to the child process.
-  if (!UsingNeckoIPCSecurity()) {
-    bool offline = false;
-    gIOService->IsAppOffline(targetAppId, &offline);
-    if (!SendAppOfflineStatus(targetAppId, offline)) {
-      printf_stderr("NeckoParent: "
-                    "SendAppOfflineStatus failed for targetAppId: %u\n", targetAppId);
-    }
-  }
-
-  return NS_OK;
 }
 
 bool

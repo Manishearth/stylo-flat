@@ -39,18 +39,35 @@ struct WasmRenderContext
 {
     JSContext* cx;
     AstModule* module;
-    StringBuffer& buffer;
+    WasmPrintBuffer& buffer;
+    GeneratedSourceMap* maybeSourceMap;
     uint32_t indent;
 
     uint32_t currentFuncIndex;
 
-    WasmRenderContext(JSContext* cx, AstModule* module, StringBuffer& buffer)
-      : cx(cx), module(module), buffer(buffer), indent(0), currentFuncIndex(0)
+    WasmRenderContext(JSContext* cx, AstModule* module, WasmPrintBuffer& buffer, GeneratedSourceMap* sourceMap)
+      : cx(cx), module(module), buffer(buffer), maybeSourceMap(sourceMap), indent(0), currentFuncIndex(0)
     {}
+
+    StringBuffer& sb() { return buffer.stringBuffer(); }
 };
 
 /*****************************************************************************/
 // utilities
+
+// Return true on purpose, so that we have a useful error message to provide to
+// the user.
+static bool
+Fail(WasmRenderContext& c, const char* msg)
+{
+    c.buffer.stringBuffer().clear();
+
+    return c.buffer.append("There was a problem when rendering the wasm text format: ") &&
+           c.buffer.append(msg, strlen(msg)) &&
+           c.buffer.append("\nYou should consider file a bug on Bugzilla in the "
+                           "Core:::JavaScript Engine::JIT component at "
+                           "https://bugzilla.mozilla.org/enter_bug.cgi.");
+}
 
 static bool
 RenderIndent(WasmRenderContext& c)
@@ -65,7 +82,7 @@ RenderIndent(WasmRenderContext& c)
 static bool
 RenderInt32(WasmRenderContext& c, int32_t num)
 {
-    return NumberValueToStringBuffer(c.cx, Int32Value(num), c.buffer);
+    return NumberValueToStringBuffer(c.cx, Int32Value(num), c.sb());
 }
 
 static bool
@@ -75,7 +92,7 @@ RenderInt64(WasmRenderContext& c, int64_t num)
         return false;
     if (!num)
         return c.buffer.append("0");
-    return RenderInBase<10>(c.buffer, mozilla::Abs(num));
+    return RenderInBase<10>(c.sb(), mozilla::Abs(num));
 }
 
 static bool
@@ -83,7 +100,7 @@ RenderDouble(WasmRenderContext& c, RawF64 num)
 {
     double d = num.fp();
     if (IsNaN(d))
-        return RenderNaN(c.buffer, num);
+        return RenderNaN(c.sb(), num);
     if (IsNegativeZero(d))
         return c.buffer.append("-0");
     if (IsInfinite(d)) {
@@ -91,7 +108,7 @@ RenderDouble(WasmRenderContext& c, RawF64 num)
             return c.buffer.append("infinity");
         return c.buffer.append("-infinity");
     }
-    return NumberValueToStringBuffer(c.cx, DoubleValue(d), c.buffer);
+    return NumberValueToStringBuffer(c.cx, DoubleValue(d), c.sb());
 }
 
 static bool
@@ -99,7 +116,7 @@ RenderFloat32(WasmRenderContext& c, RawF32 num)
 {
     float f = num.fp();
     if (IsNaN(f))
-        return RenderNaN(c.buffer, num);
+        return RenderNaN(c.sb(), num);
     return RenderDouble(c, RawF64(double(f)));
 }
 
@@ -221,17 +238,26 @@ RenderBlockNameAndSignature(WasmRenderContext& c, const AstName& name, ExprType 
 }
 
 static bool
-RenderExpr(WasmRenderContext& c, AstExpr& expr);
+RenderExpr(WasmRenderContext& c, AstExpr& expr, bool newLine = true);
+
+#define MAP_AST_EXPR(c, expr)                                                         \
+    if (c.maybeSourceMap) {                                                           \
+        uint32_t lineno = c.buffer.lineno();                                          \
+        uint32_t column = c.buffer.column();                                          \
+        if (!c.maybeSourceMap->exprlocs().emplaceBack(lineno, column, expr.offset())) \
+            return false;                                                             \
+    }
 
 /*****************************************************************************/
 // binary format parsing and rendering
 
 static bool
-RenderNop(WasmRenderContext& c)
+RenderNop(WasmRenderContext& c, AstNop& nop)
 {
     if (!RenderIndent(c))
         return false;
-    return c.buffer.append("nop\n");
+    MAP_AST_EXPR(c, nop);
+    return c.buffer.append("nop");
 }
 
 static bool
@@ -242,17 +268,17 @@ RenderDrop(WasmRenderContext& c, AstDrop& drop)
 
     if (!RenderIndent(c))
         return false;
-    if (!c.buffer.append("drop\n"))
-        return false;
-    return true;
+    MAP_AST_EXPR(c, drop);
+    return c.buffer.append("drop");
 }
 
 static bool
-RenderUnreachable(WasmRenderContext& c)
+RenderUnreachable(WasmRenderContext& c, AstUnreachable& unreachable)
 {
     if (!RenderIndent(c))
         return false;
-    return c.buffer.append("unreachable\n");
+    MAP_AST_EXPR(c, unreachable);
+    return c.buffer.append("unreachable");
 }
 
 static bool
@@ -275,23 +301,15 @@ RenderCall(WasmRenderContext& c, AstCall& call)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, call);
     if (call.expr() == Expr::Call) {
         if (!c.buffer.append("call "))
             return false;
-    } else if (call.expr() == Expr::CallImport) {
-        if (!c.buffer.append("call_import "))
-            return false;
     } else {
-        return false;
+        return Fail(c, "unexpected operator");
     }
 
-    if (!RenderRef(c, call.func()))
-        return false;
-
-    if (!c.buffer.append('\n'))
-        return false;
-
-    return true;
+    return RenderRef(c, call.func());
 }
 
 static bool
@@ -306,15 +324,10 @@ RenderCallIndirect(WasmRenderContext& c, AstCallIndirect& call)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, call);
     if (!c.buffer.append("call_indirect "))
         return false;
-    if (!RenderRef(c, call.sig()))
-        return false;
-
-    if (!c.buffer.append('\n'))
-        return false;
-
-    return true;
+    return RenderRef(c, call.sig());
 }
 
 static bool
@@ -323,6 +336,7 @@ RenderConst(WasmRenderContext& c, AstConst& cst)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, cst);
     if (!RenderValType(c, cst.val().type()))
         return false;
     if (!c.buffer.append(".const "))
@@ -330,28 +344,18 @@ RenderConst(WasmRenderContext& c, AstConst& cst)
 
     switch (ToExprType(cst.val().type())) {
       case ExprType::I32:
-        if (!RenderInt32(c, (uint32_t)cst.val().i32()))
-            return false;
-        break;
+        return RenderInt32(c, (int32_t)cst.val().i32());
       case ExprType::I64:
-        if (!RenderInt64(c, (uint32_t)cst.val().i64()))
-            return false;
-        break;
+        return RenderInt64(c, (int64_t)cst.val().i64());
       case ExprType::F32:
-        if (!RenderFloat32(c, cst.val().f32()))
-            return false;
-        break;
+        return RenderFloat32(c, cst.val().f32());
       case ExprType::F64:
-        if (!RenderDouble(c, cst.val().f64()))
-            return false;
-        break;
+        return RenderDouble(c, cst.val().f64());
       default:
-        return false;
+        break;
     }
 
-    if (!c.buffer.append('\n'))
-        return false;
-    return true;
+    return false;
 }
 
 static bool
@@ -360,32 +364,25 @@ RenderGetLocal(WasmRenderContext& c, AstGetLocal& gl)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, gl);
     if (!c.buffer.append("get_local "))
         return false;
-    if (!RenderRef(c, gl.local()))
-        return false;
-    if (!c.buffer.append('\n'))
-        return false;
-    return true;
+    return RenderRef(c, gl.local());
 }
 
 static bool
 RenderSetLocal(WasmRenderContext& c, AstSetLocal& sl)
- {
+{
     if (!RenderExpr(c, sl.value()))
         return false;
 
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, sl);
     if (!c.buffer.append("set_local "))
         return false;
-    if (!RenderRef(c, sl.local()))
-        return false;
-
-    if (!c.buffer.append('\n'))
-        return false;
-    return true;
+    return RenderRef(c, sl.local());
 }
 
 static bool
@@ -397,14 +394,37 @@ RenderTeeLocal(WasmRenderContext& c, AstTeeLocal& tl)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, tl);
     if (!c.buffer.append("tee_local "))
         return false;
-    if (!RenderRef(c, tl.local()))
+    return RenderRef(c, tl.local());
+}
+
+static bool
+RenderGetGlobal(WasmRenderContext& c, AstGetGlobal& gg)
+{
+    if (!RenderIndent(c))
         return false;
 
-    if (!c.buffer.append('\n'))
+    MAP_AST_EXPR(c, gg);
+    if (!c.buffer.append("get_global "))
         return false;
-    return true;
+    return RenderRef(c, gg.global());
+}
+
+static bool
+RenderSetGlobal(WasmRenderContext& c, AstSetGlobal& sg)
+{
+    if (!RenderExpr(c, sg.value()))
+        return false;
+
+    if (!RenderIndent(c))
+        return false;
+
+    MAP_AST_EXPR(c, sg);
+    if (!c.buffer.append("set_global "))
+        return false;
+    return RenderRef(c, sg.global());
 }
 
 static bool
@@ -423,14 +443,16 @@ RenderBlock(WasmRenderContext& c, AstBlock& block)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, block);
     if (block.expr() == Expr::Block) {
         if (!c.buffer.append("block"))
             return false;
     } else if (block.expr() == Expr::Loop) {
         if (!c.buffer.append("loop"))
             return false;
-    } else
-        return false;
+    } else {
+        return Fail(c, "unexpected block kind");
+    }
 
     if (!RenderBlockNameAndSignature(c, block.name(), block.type()))
         return false;
@@ -446,34 +468,35 @@ RenderBlock(WasmRenderContext& c, AstBlock& block)
     if (!RenderIndent(c))
         return false;
 
-    return c.buffer.append("end\n");
+    return c.buffer.append("end");
 }
 
 static bool
 RenderFirst(WasmRenderContext& c, AstFirst& first)
 {
-    if (!RenderExprList(c, first.exprs()))
-        return false;
-
-    return true;
+    return RenderExprList(c, first.exprs());
 }
 
 static bool
-RenderNullaryOperator(WasmRenderContext& c, AstNullaryOperator& op)
+RenderCurrentMemory(WasmRenderContext& c, AstCurrentMemory& cm)
 {
     if (!RenderIndent(c))
-      return false;
-
-    const char* opStr;
-    switch (op.expr()) {
-      case Expr::CurrentMemory:     opStr = "current_memory"; break;
-      default: return false;
-    }
-
-    if (!c.buffer.append(opStr, strlen(opStr)))
         return false;
 
-    return c.buffer.append('\n');
+    return c.buffer.append("current_memory\n");
+}
+
+static bool
+RenderGrowMemory(WasmRenderContext& c, AstGrowMemory& gm)
+{
+    if (!RenderExpr(c, *gm.op()))
+        return false;
+
+    if (!RenderIndent(c))
+        return false;
+
+    MAP_AST_EXPR(c, gm);
+    return c.buffer.append("grow_memory\n");
 }
 
 static bool
@@ -485,6 +508,7 @@ RenderUnaryOperator(WasmRenderContext& c, AstUnaryOperator& op)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, op);
     const char* opStr;
     switch (op.expr()) {
       case Expr::I32Eqz:     opStr = "i32.eqz"; break;
@@ -505,14 +529,13 @@ RenderUnaryOperator(WasmRenderContext& c, AstUnaryOperator& op)
       case Expr::F64Neg:     opStr = "f64.neg"; break;
       case Expr::F64Ceil:    opStr = "f64.ceil"; break;
       case Expr::F64Floor:   opStr = "f64.floor"; break;
+      case Expr::F64Nearest: opStr = "f64.nearest"; break;
       case Expr::F64Sqrt:    opStr = "f64.sqrt"; break;
-      case Expr::GrowMemory: opStr = "grow_memory"; break;
-      default: return false;
+      case Expr::F64Trunc:   opStr = "f64.trunc"; break;
+      default:               return Fail(c, "unexpected unary operator");
     }
-    if (!c.buffer.append(opStr, strlen(opStr)))
-        return false;
 
-    return c.buffer.append('\n');
+    return c.buffer.append(opStr, strlen(opStr));
 }
 
 static bool
@@ -526,6 +549,7 @@ RenderBinaryOperator(WasmRenderContext& c, AstBinaryOperator& op)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, op);
     const char* opStr;
     switch (op.expr()) {
       case Expr::I32Add:      opStr = "i32.add"; break;
@@ -541,6 +565,8 @@ RenderBinaryOperator(WasmRenderContext& c, AstBinaryOperator& op)
       case Expr::I32Shl:      opStr = "i32.shl"; break;
       case Expr::I32ShrS:     opStr = "i32.shr_s"; break;
       case Expr::I32ShrU:     opStr = "i32.shr_u"; break;
+      case Expr::I32Rotl:     opStr = "i32.rotl"; break;
+      case Expr::I32Rotr:     opStr = "i32.rotr"; break;
       case Expr::I64Add:      opStr = "i64.add"; break;
       case Expr::I64Sub:      opStr = "i64.sub"; break;
       case Expr::I64Mul:      opStr = "i64.mul"; break;
@@ -554,6 +580,8 @@ RenderBinaryOperator(WasmRenderContext& c, AstBinaryOperator& op)
       case Expr::I64Shl:      opStr = "i64.shl"; break;
       case Expr::I64ShrS:     opStr = "i64.shr_s"; break;
       case Expr::I64ShrU:     opStr = "i64.shr_u"; break;
+      case Expr::I64Rotl:     opStr = "i64.rotl"; break;
+      case Expr::I64Rotr:     opStr = "i64.rotr"; break;
       case Expr::F32Add:      opStr = "f32.add"; break;
       case Expr::F32Sub:      opStr = "f32.sub"; break;
       case Expr::F32Mul:      opStr = "f32.mul"; break;
@@ -567,15 +595,11 @@ RenderBinaryOperator(WasmRenderContext& c, AstBinaryOperator& op)
       case Expr::F64Div:      opStr = "f64.div"; break;
       case Expr::F64Min:      opStr = "f64.min"; break;
       case Expr::F64Max:      opStr = "f64.max"; break;
-      default: return false;
+      case Expr::F64CopySign: opStr = "f64.copysign"; break;
+      default:                return Fail(c, "unexpected binary operator");
     }
-    if (!c.buffer.append(opStr, strlen(opStr)))
-        return false;
 
-    if (!c.buffer.append('\n'))
-        return false;
-
-    return true;
+    return c.buffer.append(opStr, strlen(opStr));
 }
 
 static bool
@@ -591,18 +615,14 @@ RenderTernaryOperator(WasmRenderContext& c, AstTernaryOperator& op)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, op);
     const char* opStr;
     switch (op.expr()) {
       case Expr::Select: opStr = "select"; break;
-      default: return false;
+      default:           return Fail(c, "unexpected ternary operator");
     }
-    if (!c.buffer.append(opStr, strlen(opStr)))
-        return false;
 
-    if (!c.buffer.append('\n'))
-        return false;
-
-    return true;
+    return c.buffer.append(opStr, strlen(opStr));
 }
 
 static bool
@@ -616,6 +636,7 @@ RenderComparisonOperator(WasmRenderContext& c, AstComparisonOperator& op)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, op);
     const char* opStr;
     switch (op.expr()) {
       case Expr::I32Eq:  opStr = "i32.eq"; break;
@@ -650,15 +671,10 @@ RenderComparisonOperator(WasmRenderContext& c, AstComparisonOperator& op)
       case Expr::F64Le:  opStr = "f64.le"; break;
       case Expr::F64Gt:  opStr = "f64.gt"; break;
       case Expr::F64Ge:  opStr = "f64.ge"; break;
-      default: return false;
+      default:           return Fail(c, "unexpected comparison operator");
     }
-    if (!c.buffer.append(opStr, strlen(opStr)))
-        return false;
 
-    if (!c.buffer.append('\n'))
-        return false;
-
-    return true;
+    return c.buffer.append(opStr, strlen(opStr));
 }
 
 static bool
@@ -670,6 +686,7 @@ RenderConversionOperator(WasmRenderContext& c, AstConversionOperator& op)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, op);
     const char* opStr;
     switch (op.expr()) {
       case Expr::I32WrapI64:        opStr = "i32.wrap/i64"; break;
@@ -699,12 +716,9 @@ RenderConversionOperator(WasmRenderContext& c, AstConversionOperator& op)
       case Expr::F64PromoteF32:     opStr = "f64.promote/f32"; break;
       case Expr::I32Eqz:            opStr = "i32.eqz"; break;
       case Expr::I64Eqz:            opStr = "i64.eqz"; break;
-      default: return false;
+      default:                      return Fail(c, "unexpected conversion operator");
     }
-    if (!c.buffer.append(opStr, strlen(opStr)))
-        return false;
-
-    return c.buffer.append('\n');
+    return c.buffer.append(opStr, strlen(opStr));
 }
 
 static bool
@@ -716,20 +730,11 @@ RenderIf(WasmRenderContext& c, AstIf& if_)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, if_);
     if (!c.buffer.append("if"))
         return false;
-
     if (!RenderBlockNameAndSignature(c, if_.name(), if_.type()))
         return false;
-
-    if (!if_.name().empty()) {
-        if (!c.buffer.append(' '))
-            return false;
-
-        if (!RenderName(c, if_.name()))
-            return false;
-    }
-
     if (!c.buffer.append('\n'))
         return false;
 
@@ -754,34 +759,31 @@ RenderIf(WasmRenderContext& c, AstIf& if_)
     if (!RenderIndent(c))
         return false;
 
-    return c.buffer.append("end\n");
+    return c.buffer.append("end");
 }
 
 static bool
 RenderLoadStoreBase(WasmRenderContext& c, const AstLoadStoreAddress& lsa)
 {
-    if (!RenderExpr(c, lsa.base()))
-        return false;
-
-    return true;
+    return RenderExpr(c, lsa.base());
 }
 
 static bool
 RenderLoadStoreAddress(WasmRenderContext& c, const AstLoadStoreAddress& lsa, uint32_t defaultAlignLog2)
 {
     if (lsa.offset() != 0) {
-      if (!c.buffer.append(" offset="))
-          return false;
-      if (!RenderInt32(c, lsa.offset()))
-          return false;
+        if (!c.buffer.append(" offset="))
+            return false;
+        if (!RenderInt32(c, lsa.offset()))
+            return false;
     }
 
     uint32_t alignLog2 = lsa.flags();
     if (defaultAlignLog2 != alignLog2) {
-      if (!c.buffer.append(" align="))
-          return false;
-      if (!RenderInt32(c, 1 << alignLog2))
-          return false;
+        if (!c.buffer.append(" align="))
+            return false;
+        if (!RenderInt32(c, 1 << alignLog2))
+            return false;
     }
 
     return true;
@@ -796,6 +798,7 @@ RenderLoad(WasmRenderContext& c, AstLoad& load)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, load);
     uint32_t defaultAlignLog2;
     switch (load.expr()) {
       case Expr::I32Load8S:
@@ -869,13 +872,10 @@ RenderLoad(WasmRenderContext& c, AstLoad& load)
         defaultAlignLog2 = 3;
         break;
       default:
-        return false;
+        return Fail(c, "unexpected load operator");
     }
 
-    if (!RenderLoadStoreAddress(c, load.address(), defaultAlignLog2))
-        return false;
-
-    return c.buffer.append('\n');
+    return RenderLoadStoreAddress(c, load.address(), defaultAlignLog2);
 }
 
 static bool
@@ -890,6 +890,7 @@ RenderStore(WasmRenderContext& c, AstStore& store)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, store);
     uint32_t defaultAlignLog2;
     switch (store.expr()) {
       case Expr::I32Store8:
@@ -938,13 +939,10 @@ RenderStore(WasmRenderContext& c, AstStore& store)
         defaultAlignLog2 = 3;
         break;
       default:
-        return false;
+        return Fail(c, "unexpected store operator");
     }
 
-    if (!RenderLoadStoreAddress(c, store.address(), defaultAlignLog2))
-        return false;
-
-    return c.buffer.append('\n');
+    return RenderLoadStoreAddress(c, store.address(), defaultAlignLog2);
 }
 
 static bool
@@ -966,21 +964,19 @@ RenderBranch(WasmRenderContext& c, AstBranch& branch)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, branch);
     if (expr == Expr::BrIf ? !c.buffer.append("br_if ") : !c.buffer.append("br "))
         return false;
 
-    if (!RenderRef(c, branch.target()))
-        return false;
-
-    return c.buffer.append('\n');
+    return RenderRef(c, branch.target());
 }
 
 static bool
 RenderBrTable(WasmRenderContext& c, AstBranchTable& table)
 {
     if (table.maybeValue()) {
-      if (!RenderExpr(c, *(table.maybeValue())))
-          return false;
+        if (!RenderExpr(c, *(table.maybeValue())))
+            return false;
     }
 
     // Index
@@ -990,6 +986,7 @@ RenderBrTable(WasmRenderContext& c, AstBranchTable& table)
     if (!RenderIndent(c))
         return false;
 
+    MAP_AST_EXPR(c, table);
     if (!c.buffer.append("br_table "))
         return false;
 
@@ -1002,10 +999,7 @@ RenderBrTable(WasmRenderContext& c, AstBranchTable& table)
             return false;
     }
 
-    if (!RenderRef(c, table.def()))
-        return false;
-
-    return c.buffer.append('\n');
+    return RenderRef(c, table.def());
 }
 
 static bool
@@ -1019,69 +1013,126 @@ RenderReturn(WasmRenderContext& c, AstReturn& ret)
     if (!RenderIndent(c))
         return false;
 
-    if (!c.buffer.append("return"))
-        return false;
-
-    return c.buffer.append('\n');
+    MAP_AST_EXPR(c, ret);
+    return c.buffer.append("return");
 }
 
 static bool
-RenderExpr(WasmRenderContext& c, AstExpr& expr)
+RenderExpr(WasmRenderContext& c, AstExpr& expr, bool newLine /* = true */)
 {
     switch (expr.kind()) {
       case AstExprKind::Drop:
-        return RenderDrop(c, expr.as<AstDrop>());
+        if (!RenderDrop(c, expr.as<AstDrop>()))
+            return false;
+        break;
       case AstExprKind::Nop:
-        return RenderNop(c);
+        if (!RenderNop(c, expr.as<AstNop>()))
+            return false;
+        break;
       case AstExprKind::Unreachable:
-        return RenderUnreachable(c);
+        if (!RenderUnreachable(c, expr.as<AstUnreachable>()))
+            return false;
+        break;
       case AstExprKind::Call:
-        return RenderCall(c, expr.as<AstCall>());
+        if (!RenderCall(c, expr.as<AstCall>()))
+            return false;
+        break;
       case AstExprKind::CallIndirect:
-        return RenderCallIndirect(c, expr.as<AstCallIndirect>());
+        if (!RenderCallIndirect(c, expr.as<AstCallIndirect>()))
+            return false;
+        break;
       case AstExprKind::Const:
-        return RenderConst(c, expr.as<AstConst>());
+        if (!RenderConst(c, expr.as<AstConst>()))
+            return false;
+        break;
       case AstExprKind::GetLocal:
-        return RenderGetLocal(c, expr.as<AstGetLocal>());
+        if (!RenderGetLocal(c, expr.as<AstGetLocal>()))
+            return false;
+        break;
       case AstExprKind::SetLocal:
-        return RenderSetLocal(c, expr.as<AstSetLocal>());
+        if (!RenderSetLocal(c, expr.as<AstSetLocal>()))
+            return false;
+        break;
+      case AstExprKind::GetGlobal:
+        if (!RenderGetGlobal(c, expr.as<AstGetGlobal>()))
+            return false;
+        break;
+      case AstExprKind::SetGlobal:
+        if (!RenderSetGlobal(c, expr.as<AstSetGlobal>()))
+            return false;
+        break;
       case AstExprKind::TeeLocal:
-        return RenderTeeLocal(c, expr.as<AstTeeLocal>());
+        if (!RenderTeeLocal(c, expr.as<AstTeeLocal>()))
+            return false;
+        break;
       case AstExprKind::Block:
-        return RenderBlock(c, expr.as<AstBlock>());
+        if (!RenderBlock(c, expr.as<AstBlock>()))
+            return false;
+        break;
       case AstExprKind::If:
-        return RenderIf(c, expr.as<AstIf>());
-      case AstExprKind::NullaryOperator:
-        return RenderNullaryOperator(c, expr.as<AstNullaryOperator>());
+        if (!RenderIf(c, expr.as<AstIf>()))
+            return false;
+        break;
       case AstExprKind::UnaryOperator:
-        return RenderUnaryOperator(c, expr.as<AstUnaryOperator>());
+        if (!RenderUnaryOperator(c, expr.as<AstUnaryOperator>()))
+            return false;
+        break;
       case AstExprKind::BinaryOperator:
-        return RenderBinaryOperator(c, expr.as<AstBinaryOperator>());
+        if (!RenderBinaryOperator(c, expr.as<AstBinaryOperator>()))
+            return false;
+        break;
       case AstExprKind::TernaryOperator:
-        return RenderTernaryOperator(c, expr.as<AstTernaryOperator>());
+        if (!RenderTernaryOperator(c, expr.as<AstTernaryOperator>()))
+            return false;
+        break;
       case AstExprKind::ComparisonOperator:
-        return RenderComparisonOperator(c, expr.as<AstComparisonOperator>());
+        if (!RenderComparisonOperator(c, expr.as<AstComparisonOperator>()))
+            return false;
+        break;
       case AstExprKind::ConversionOperator:
-        return RenderConversionOperator(c, expr.as<AstConversionOperator>());
+        if (!RenderConversionOperator(c, expr.as<AstConversionOperator>()))
+            return false;
+        break;
       case AstExprKind::Load:
-        return RenderLoad(c, expr.as<AstLoad>());
+        if (!RenderLoad(c, expr.as<AstLoad>()))
+            return false;
+        break;
       case AstExprKind::Store:
-        return RenderStore(c, expr.as<AstStore>());
+        if (!RenderStore(c, expr.as<AstStore>()))
+            return false;
+        break;
       case AstExprKind::Branch:
-        return RenderBranch(c, expr.as<AstBranch>());
+        if (!RenderBranch(c, expr.as<AstBranch>()))
+            return false;
+        break;
       case AstExprKind::BranchTable:
-        return RenderBrTable(c, expr.as<AstBranchTable>());
+        if (!RenderBrTable(c, expr.as<AstBranchTable>()))
+            return false;
+        break;
       case AstExprKind::Return:
-        return RenderReturn(c, expr.as<AstReturn>());
+        if (!RenderReturn(c, expr.as<AstReturn>()))
+            return false;
+        break;
       case AstExprKind::First:
-        return RenderFirst(c, expr.as<AstFirst>());
+        newLine = false;
+        if (!RenderFirst(c, expr.as<AstFirst>()))
+            return false;
+        break;
+      case AstExprKind::CurrentMemory:
+        if (!RenderCurrentMemory(c, expr.as<AstCurrentMemory>()))
+            return false;
+        break;
+      case AstExprKind::GrowMemory:
+        if (!RenderGrowMemory(c, expr.as<AstGrowMemory>()))
+            return false;
+        break;
       default:
         // Note: it's important not to remove this default since readExpr()
         // can return Expr values for which there is no enumerator.
-        break;
+        return Fail(c, "unexpected expression kind");
     }
 
-    return false;
+    return !newLine || c.buffer.append("\n");
 }
 
 static bool
@@ -1090,34 +1141,34 @@ RenderSignature(WasmRenderContext& c, const AstSig& sig, const AstNameVector* ma
     uint32_t paramsNum = sig.args().length();
 
     if (maybeLocals) {
-      for (uint32_t i = 0; i < paramsNum; i++) {
-          if (!c.buffer.append(" (param "))
-              return false;
-          const AstName& name = (*maybeLocals)[i];
-          if (!name.empty()) {
-              if (!RenderName(c, name))
-                  return false;
-              if (!c.buffer.append(" "))
-                  return false;
-          }
-          ValType arg = sig.args()[i];
-          if (!RenderValType(c, arg))
-              return false;
-          if (!c.buffer.append(")"))
-              return false;
-      }
+        for (uint32_t i = 0; i < paramsNum; i++) {
+            if (!c.buffer.append(" (param "))
+                return false;
+            const AstName& name = (*maybeLocals)[i];
+            if (!name.empty()) {
+                if (!RenderName(c, name))
+                    return false;
+                if (!c.buffer.append(" "))
+                    return false;
+            }
+            ValType arg = sig.args()[i];
+            if (!RenderValType(c, arg))
+                return false;
+            if (!c.buffer.append(")"))
+                return false;
+        }
     } else if (paramsNum > 0) {
-      if (!c.buffer.append(" (param"))
-          return false;
-      for (uint32_t i = 0; i < paramsNum; i++) {
-          if (!c.buffer.append(" "))
-              return false;
-          ValType arg = sig.args()[i];
-          if (!RenderValType(c, arg))
-              return false;
-      }
-      if (!c.buffer.append(")"))
-          return false;
+        if (!c.buffer.append(" (param"))
+            return false;
+        for (uint32_t i = 0; i < paramsNum; i++) {
+            if (!c.buffer.append(" "))
+                return false;
+            ValType arg = sig.args()[i];
+            if (!RenderValType(c, arg))
+                return false;
+        }
+        if (!c.buffer.append(")"))
+            return false;
     }
     if (sig.ret() != ExprType::Void) {
         if (!c.buffer.append(" (result "))
@@ -1160,45 +1211,175 @@ RenderTypeSection(WasmRenderContext& c, const AstModule::SigVector& sigs)
 }
 
 static bool
-RenderTableSection(WasmRenderContext& c, const AstModule& module)
+RenderLimits(WasmRenderContext& c, const Limits& limits)
 {
-    if (module.elemSegments().empty())
-        return true;
-
-    const AstElemSegment& segment = *module.elemSegments()[0];
-
-    if (!RenderIndent(c))
+    if (!RenderInt32(c, limits.initial))
         return false;
-
-    if (!c.buffer.append("(table anyfunc (elem "))
-        return false;
-
-    for (const AstRef& elem : segment.elems()) {
+    if (limits.maximum) {
         if (!c.buffer.append(" "))
             return false;
-        uint32_t index = elem.index();
-        AstName name = index < module.funcImportNames().length()
+        if (!RenderInt32(c, *limits.maximum))
+            return false;
+    }
+    return true;
+}
+
+static bool
+RenderResizableTable(WasmRenderContext& c, const Limits& table)
+{
+    if (!c.buffer.append("(table "))
+        return false;
+    if (!RenderLimits(c, table))
+        return false;
+    return c.buffer.append(" anyfunc)");
+}
+
+static bool
+RenderTableSection(WasmRenderContext& c, const AstModule& module)
+{
+    if (!module.hasTable())
+        return true;
+    for (const AstResizable& table : module.tables()) {
+        if (table.imported)
+            continue;
+        if (!RenderIndent(c))
+            return false;
+        if (!RenderResizableTable(c, table.limits))
+            return false;
+        if (!c.buffer.append("\n"))
+            return false;
+    }
+    return true;
+}
+
+static bool
+RenderInlineExpr(WasmRenderContext& c, AstExpr& expr)
+{
+    if (!c.buffer.append("("))
+        return false;
+
+    uint32_t prevIndent = c.indent;
+    c.indent = 0;
+    if (!RenderExpr(c, expr, /* newLine */ false))
+        return false;
+    c.indent = prevIndent;
+
+    return c.buffer.append(")");
+}
+
+static bool
+RenderElemSection(WasmRenderContext& c, const AstModule& module)
+{
+    for (const AstElemSegment* segment : module.elemSegments()) {
+        if (!RenderIndent(c))
+            return false;
+        if (!c.buffer.append("(elem "))
+            return false;
+        if (!RenderInlineExpr(c, *segment->offset()))
+            return false;
+
+        for (const AstRef& elem : segment->elems()) {
+            if (!c.buffer.append(" "))
+                return false;
+
+            uint32_t index = elem.index();
+            AstName name = index < module.funcImportNames().length()
                            ? module.funcImportNames()[index]
                            : module.funcs()[index - module.funcImportNames().length()]->name();
-        if (name.empty()) {
-            if (!RenderInt32(c, index))
-                return false;
-        } else {
-          if (!RenderName(c, name))
-              return false;
-        }
-    }
 
-    if (!c.buffer.append("))\n"))
-        return false;
+            if (name.empty()) {
+                if (!RenderInt32(c, index))
+                    return false;
+            } else {
+                if (!RenderName(c, name))
+                    return false;
+            }
+        }
+
+        if (!c.buffer.append(")\n"))
+            return false;
+    }
 
     return true;
 }
 
 static bool
-RenderImport(WasmRenderContext& c, AstImport& import, const AstModule::SigVector& sigs)
+RenderGlobal(WasmRenderContext& c, const AstGlobal& glob, bool inImport = false)
 {
-    const AstSig* sig = sigs[import.funcSig().index()];
+    if (!c.buffer.append("(global "))
+        return false;
+
+    if (!inImport) {
+        if (!RenderName(c, glob.name()))
+            return false;
+        if (!c.buffer.append(" "))
+            return false;
+    }
+
+    if (glob.isMutable()) {
+        if (!c.buffer.append("(mut "))
+            return false;
+        if (!RenderValType(c, glob.type()))
+            return false;
+        if (!c.buffer.append(")"))
+            return false;
+    } else {
+        if (!RenderValType(c, glob.type()))
+            return false;
+    }
+
+    if (glob.hasInit()) {
+        if (!c.buffer.append(" "))
+            return false;
+        if (!RenderInlineExpr(c, glob.init()))
+            return false;
+    }
+
+    if (!c.buffer.append(")"))
+        return false;
+
+    return inImport || c.buffer.append("\n");
+}
+
+static bool
+RenderGlobalSection(WasmRenderContext& c, const AstModule& module)
+{
+    if (module.globals().empty())
+        return true;
+
+    for (const AstGlobal* global : module.globals()) {
+        if (!RenderIndent(c))
+            return false;
+        if (!RenderGlobal(c, *global))
+            return false;
+    }
+
+    return true;
+}
+
+static bool
+RenderResizableMemory(WasmRenderContext& c, Limits memory)
+{
+    if (!c.buffer.append("(memory "))
+        return false;
+
+    MOZ_ASSERT(memory.initial % PageSize == 0);
+    memory.initial /= PageSize;
+
+    if (memory.maximum) {
+        MOZ_ASSERT(*memory.maximum % PageSize == 0);
+        *memory.maximum /= PageSize;
+    }
+
+    if (!RenderLimits(c, memory))
+        return false;
+
+    return c.buffer.append(")");
+}
+
+static bool
+RenderImport(WasmRenderContext& c, AstImport& import, const AstModule& module)
+{
     if (!RenderIndent(c))
         return false;
     if (!c.buffer.append("(import "))
@@ -1219,28 +1400,44 @@ RenderImport(WasmRenderContext& c, AstImport& import, const AstModule::SigVector
     if (!RenderEscapedString(c, fieldName))
         return false;
 
-    if (!c.buffer.append("\""))
+    if (!c.buffer.append("\" "))
         return false;
 
-    if (!RenderSignature(c, *sig))
-        return false;
-    if (!c.buffer.append(")\n"))
-        return false;
-
-    return true;
-}
-
-
-static bool
-RenderImportSection(WasmRenderContext& c, const AstModule::ImportVector& imports, const AstModule::SigVector& sigs)
-{
-    uint32_t numImports = imports.length();
-
-    for (uint32_t i = 0; i < numImports; i++) {
-        if (!RenderImport(c, *imports[i], sigs))
+    switch (import.kind()) {
+      case DefinitionKind::Function: {
+        const AstSig* sig = module.sigs()[import.funcSig().index()];
+        if (!RenderSignature(c, *sig))
             return false;
+        break;
+      }
+      case DefinitionKind::Table: {
+        if (!RenderResizableTable(c, import.limits()))
+            return false;
+        break;
+      }
+      case DefinitionKind::Memory: {
+        if (!RenderResizableMemory(c, import.limits()))
+            return false;
+        break;
+      }
+      case DefinitionKind::Global: {
+        const AstGlobal& glob = import.global();
+        if (!RenderGlobal(c, glob, /* inImport */ true))
+            return false;
+        break;
+      }
     }
 
+    return c.buffer.append(")\n");
+}
+
+static bool
+RenderImportSection(WasmRenderContext& c, const AstModule& module)
+{
+    for (AstImport* import : module.imports()) {
+        if (!RenderImport(c, *import, module))
+            return false;
+    }
     return true;
 }
 
@@ -1257,14 +1454,13 @@ RenderExport(WasmRenderContext& c, AstExport& export_,
         return false;
     if (!c.buffer.append("\" "))
         return false;
-    if (export_.kind() == DefinitionKind::Memory) {
-        if (!c.buffer.append("memory"))
-          return false;
-    } else {
+
+    switch (export_.kind()) {
+      case DefinitionKind::Function: {
         uint32_t index = export_.ref().index();
         AstName name = index < funcImportNames.length()
-                           ? funcImportNames[index]
-                           : funcs[index - funcImportNames.length()]->name();
+                       ? funcImportNames[index]
+                       : funcs[index - funcImportNames.length()]->name();
         if (name.empty()) {
             if (!RenderInt32(c, index))
                 return false;
@@ -1272,11 +1468,28 @@ RenderExport(WasmRenderContext& c, AstExport& export_,
             if (!RenderName(c, name))
                 return false;
         }
+        break;
+      }
+      case DefinitionKind::Table: {
+        if (!c.buffer.append("table"))
+            return false;
+        break;
+      }
+      case DefinitionKind::Memory: {
+        if (!c.buffer.append("memory"))
+            return false;
+        break;
+      }
+      case DefinitionKind::Global: {
+        if (!c.buffer.append("global"))
+            return false;
+        if (!RenderRef(c, export_.ref()))
+            return false;
+        break;
+      }
     }
-    if (!c.buffer.append(")\n"))
-        return false;
 
-    return true;
+    return c.buffer.append(")\n");
 }
 
 static bool
@@ -1297,6 +1510,9 @@ RenderFunctionBody(WasmRenderContext& c, AstFunc& func, const AstModule::SigVect
 {
     const AstSig* sig = sigs[func.sig().index()];
 
+    size_t startExprIndex = c.maybeSourceMap ? c.maybeSourceMap->exprlocs().length() : 0;
+    uint32_t startLineno = c.buffer.lineno();
+
     uint32_t argsNum = sig->args().length();
     uint32_t localsNum = func.vars().length();
     if (localsNum > 0) {
@@ -1307,10 +1523,10 @@ RenderFunctionBody(WasmRenderContext& c, AstFunc& func, const AstModule::SigVect
                 return false;
             const AstName& name = func.locals()[argsNum + i];
             if (!name.empty()) {
-              if (!RenderName(c, name))
-                  return false;
-              if (!c.buffer.append(" "))
-                  return false;
+                if (!RenderName(c, name))
+                    return false;
+                if (!c.buffer.append(" "))
+                    return false;
             }
             ValType local = func.vars()[i];
             if (!RenderValType(c, local))
@@ -1325,15 +1541,25 @@ RenderFunctionBody(WasmRenderContext& c, AstFunc& func, const AstModule::SigVect
 
     uint32_t exprsNum = func.body().length();
     for (uint32_t i = 0; i < exprsNum; i++) {
-      if (!RenderExpr(c, *func.body()[i]))
-          return false;
+        if (!RenderExpr(c, *func.body()[i]))
+            return false;
+    }
+
+    size_t endExprIndex = c.maybeSourceMap ? c.maybeSourceMap->exprlocs().length() : 0;
+    uint32_t endLineno = c.buffer.lineno();
+
+    if (c.maybeSourceMap) {
+        if (!c.maybeSourceMap->functionlocs().emplaceBack(startExprIndex, endExprIndex,
+                                                          startLineno, endLineno))
+            return false;
     }
 
     return true;
 }
 
 static bool
-RenderCodeSection(WasmRenderContext& c, const AstModule::FuncVector& funcs, const AstModule::SigVector& sigs)
+RenderCodeSection(WasmRenderContext& c, const AstModule::FuncVector& funcs,
+                  const AstModule::SigVector& sigs)
 {
     uint32_t numFuncBodies = funcs.length();
     for (uint32_t funcIndex = 0; funcIndex < numFuncBodies; funcIndex++) {
@@ -1346,8 +1572,8 @@ RenderCodeSection(WasmRenderContext& c, const AstModule::FuncVector& funcs, cons
         if (!c.buffer.append("(func "))
             return false;
         if (!func->name().empty()) {
-          if (!RenderName(c, func->name()))
-              return false;
+            if (!RenderName(c, func->name()))
+                return false;
         }
 
         if (!RenderSignature(c, *sig, &(func->locals())))
@@ -1367,60 +1593,80 @@ RenderCodeSection(WasmRenderContext& c, const AstModule::FuncVector& funcs, cons
             return false;
     }
 
-   return true;
+    return true;
 }
 
-
 static bool
-RenderDataSection(WasmRenderContext& c, const AstModule& module)
+RenderMemorySection(WasmRenderContext& c, const AstModule& module)
 {
     if (!module.hasMemory())
         return true;
 
-    if (!RenderIndent(c))
-        return false;
-    if (!c.buffer.append("(memory "))
-        return false;
-    if (!RenderInt32(c, module.memory().initial))
-       return false;
-    Maybe<uint32_t> memMax = module.memory().maximum;
-    if (memMax) {
-        if (!c.buffer.append(" "))
+    for (const AstResizable& memory : module.memories()) {
+        if (memory.imported)
+            continue;
+        if (!RenderIndent(c))
             return false;
-        if (!RenderInt32(c, *memMax))
+        if (!RenderResizableMemory(c, memory.limits))
+            return false;
+        if (!c.buffer.append("\n"))
             return false;
     }
 
-    c.indent++;
+    return true;
+}
 
+static bool
+RenderDataSection(WasmRenderContext& c, const AstModule& module)
+{
     uint32_t numSegments = module.dataSegments().length();
-    if (!numSegments) {
-      if (!c.buffer.append(")\n"))
-          return false;
-      return true;
-    }
-    if (!c.buffer.append("\n"))
-        return false;
+    if (!numSegments)
+        return true;
 
-    for (uint32_t i = 0; i < numSegments; i++) {
-        const AstDataSegment* segment = module.dataSegments()[i];
+    for (const AstDataSegment* seg : module.dataSegments()) {
+        if (!RenderIndent(c))
+            return false;
+        if (!c.buffer.append("(data "))
+            return false;
+        if (!RenderInlineExpr(c, *seg->offset()))
+            return false;
+        if (!c.buffer.append("\n"))
+            return false;
+
+        c.indent++;
+        for (const AstName& fragment : seg->fragments()) {
+            if (!RenderIndent(c))
+                return false;
+            if (!c.buffer.append("\""))
+                return false;
+            if (!RenderEscapedString(c, fragment))
+                return false;
+            if (!c.buffer.append("\"\n"))
+                return false;
+        }
+        c.indent--;
 
         if (!RenderIndent(c))
             return false;
-        if (!c.buffer.append("(segment "))
-           return false;
-        if (!RenderInt32(c, segment->offset()->as<AstConst>().val().i32()))
-           return false;
-        if (!c.buffer.append(" \""))
-           return false;
-
-        RenderEscapedString(c, segment->text());
-
-        if (!c.buffer.append("\")\n"))
-           return false;
+        if (!c.buffer.append(")\n"))
+            return false;
     }
 
-    c.indent--;
+    return true;
+}
+
+static bool
+RenderStartSection(WasmRenderContext& c, AstModule& module)
+{
+    if (!module.hasStartFunc())
+        return true;
+
+    if (!RenderIndent(c))
+        return false;
+    if (!c.buffer.append("(start "))
+        return false;
+    if (!RenderRef(c, module.startFunc().func()))
+        return false;
     if (!c.buffer.append(")\n"))
         return false;
 
@@ -1438,13 +1684,25 @@ RenderModule(WasmRenderContext& c, AstModule& module)
     if (!RenderTypeSection(c, module.sigs()))
         return false;
 
-    if (!RenderImportSection(c, module.imports(), module.sigs()))
+    if (!RenderImportSection(c, module))
         return false;
 
     if (!RenderTableSection(c, module))
         return false;
 
+    if (!RenderMemorySection(c, module))
+        return false;
+
+    if (!RenderGlobalSection(c, module))
+        return false;
+
     if (!RenderExportSection(c, module.exports(), module.funcImportNames(), module.funcs()))
+        return false;
+
+    if (!RenderStartSection(c, module))
+        return false;
+
+    if (!RenderElemSection(c, module))
         return false;
 
     if (!RenderCodeSection(c, module.funcs(), module.sigs()))
@@ -1461,20 +1719,22 @@ RenderModule(WasmRenderContext& c, AstModule& module)
     return true;
 }
 
+#undef MAP_AST_EXPR
+
 /*****************************************************************************/
 // Top-level functions
 
 bool
-wasm::BinaryToText(JSContext* cx, const uint8_t* bytes, size_t length, StringBuffer& buffer)
+wasm::BinaryToText(JSContext* cx, const uint8_t* bytes, size_t length, StringBuffer& buffer, GeneratedSourceMap* sourceMap)
 {
-
     LifoAlloc lifo(AST_LIFO_DEFAULT_CHUNK_SIZE);
 
     AstModule* module;
     if (!BinaryToAst(cx, bytes, length, lifo, &module))
         return false;
 
-    WasmRenderContext c(cx, module, buffer);
+    WasmPrintBuffer buf(buffer);
+    WasmRenderContext c(cx, module, buf, sourceMap);
 
     if (!RenderModule(c, *module)) {
         if (!cx->isExceptionPending())
@@ -1484,4 +1744,3 @@ wasm::BinaryToText(JSContext* cx, const uint8_t* bytes, size_t length, StringBuf
 
     return true;
 }
-

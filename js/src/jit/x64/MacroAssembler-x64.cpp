@@ -417,20 +417,16 @@ MacroAssemblerX64::asMasm() const
     return *static_cast<const MacroAssembler*>(this);
 }
 
-//{{{ check_macroassembler_style
-// ===============================================================
-// Stack manipulation functions.
-
 void
-MacroAssembler::reserveStack(uint32_t amount)
+MacroAssembler::subFromStackPtr(Imm32 imm32)
 {
-    if (amount) {
+    if (imm32.value) {
         // On windows, we cannot skip very far down the stack without touching the
         // memory pages in-between.  This is a corner-case code for situations where the
         // Ion frame data for a piece of code is very large.  To handle this special case,
         // for frames over 1k in size we allocate memory on the stack incrementally, touching
         // it as we go.
-        uint32_t amountLeft = amount;
+        uint32_t amountLeft = imm32.value;
         while (amountLeft > 4096) {
             subq(Imm32(4096), StackPointer);
             store32(Imm32(0), Address(StackPointer, 0));
@@ -438,10 +434,9 @@ MacroAssembler::reserveStack(uint32_t amount)
         }
         subq(Imm32(amountLeft), StackPointer);
     }
-    framePushed_ += amount;
 }
 
-
+//{{{ check_macroassembler_style
 // ===============================================================
 // ABI function calls.
 
@@ -661,9 +656,12 @@ MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value, MIRType value
 // wasm support
 
 void
-MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAddr, AnyRegister out)
+MacroAssembler::wasmLoad(const wasm::MemoryAccessDesc& access, Operand srcAddr, AnyRegister out)
 {
-    switch (type) {
+    memoryBarrier(access.barrierBefore());
+
+    size_t loadOffset = size();
+    switch (access.type()) {
       case Scalar::Int8:
         movsbl(srcAddr, out.gpr());
         break;
@@ -687,7 +685,7 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
         loadDouble(srcAddr, out.fpu());
         break;
       case Scalar::Float32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movss zeroes out the high lanes.
           case 1: loadFloat32(srcAddr, out.fpu()); break;
           // See comment above, which also applies to movsd.
@@ -697,7 +695,7 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
         }
         break;
       case Scalar::Int32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movd zeroes out the high lanes.
           case 1: vmovd(srcAddr, out.fpu()); break;
           // See comment above, which also applies to movq.
@@ -707,11 +705,11 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
         }
         break;
       case Scalar::Int8x16:
-        MOZ_ASSERT(numSimdElems == 16, "unexpected partial load");
+        MOZ_ASSERT(access.numSimdElems() == 16, "unexpected partial load");
         loadUnalignedSimd128Int(srcAddr, out.fpu());
         break;
       case Scalar::Int16x8:
-        MOZ_ASSERT(numSimdElems == 8, "unexpected partial load");
+        MOZ_ASSERT(access.numSimdElems() == 8, "unexpected partial load");
         loadUnalignedSimd128Int(srcAddr, out.fpu());
         break;
       case Scalar::Int64:
@@ -720,12 +718,19 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
+    append(access, loadOffset, framePushed());
+
+    memoryBarrier(access.barrierAfter());
 }
 
 void
-MacroAssembler::wasmLoadI64(Scalar::Type type, Operand srcAddr, Register64 out)
+MacroAssembler::wasmLoadI64(const wasm::MemoryAccessDesc& access, Operand srcAddr, Register64 out)
 {
-    switch (type) {
+    MOZ_ASSERT(!access.isAtomic());
+    MOZ_ASSERT(!access.isSimd());
+
+    size_t loadOffset = size();
+    switch (access.type()) {
       case Scalar::Int8:
         movsbq(srcAddr, out.reg);
         break;
@@ -759,13 +764,16 @@ MacroAssembler::wasmLoadI64(Scalar::Type type, Operand srcAddr, Register64 out)
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
+    append(access, loadOffset, framePushed());
 }
 
 void
-MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister value,
-                          Operand dstAddr)
+MacroAssembler::wasmStore(const wasm::MemoryAccessDesc& access, AnyRegister value, Operand dstAddr)
 {
-    switch (type) {
+    memoryBarrier(access.barrierBefore());
+
+    size_t storeOffset = size();
+    switch (access.type()) {
       case Scalar::Int8:
       case Scalar::Uint8:
         movb(value.gpr(), dstAddr);
@@ -788,7 +796,7 @@ MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister 
         storeUncanonicalizedDouble(value.fpu(), dstAddr);
         break;
       case Scalar::Float32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movss zeroes out the high lanes.
           case 1: storeUncanonicalizedFloat32(value.fpu(), dstAddr); break;
           // See comment above, which also applies to movsd.
@@ -798,7 +806,7 @@ MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister 
         }
         break;
       case Scalar::Int32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movd zeroes out the high lanes.
           case 1: vmovd(value.fpu(), dstAddr); break;
           // See comment above, which also applies to movq.
@@ -808,17 +816,20 @@ MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister 
         }
         break;
       case Scalar::Int8x16:
-        MOZ_ASSERT(numSimdElems == 16, "unexpected partial store");
+        MOZ_ASSERT(access.numSimdElems() == 16, "unexpected partial store");
         storeUnalignedSimd128Int(value.fpu(), dstAddr);
         break;
       case Scalar::Int16x8:
-        MOZ_ASSERT(numSimdElems == 8, "unexpected partial store");
+        MOZ_ASSERT(access.numSimdElems() == 8, "unexpected partial store");
         storeUnalignedSimd128Int(value.fpu(), dstAddr);
         break;
       case Scalar::Uint8Clamped:
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
+    append(access, storeOffset, framePushed());
+
+    memoryBarrier(access.barrierAfter());
 }
 
 void

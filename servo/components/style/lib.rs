@@ -29,7 +29,6 @@
 #![cfg_attr(feature = "servo", feature(proc_macro))]
 #![cfg_attr(feature = "servo", feature(rustc_attrs))]
 #![cfg_attr(feature = "servo", feature(structural_match))]
-#![cfg_attr(feature = "servo", plugin(heapsize_plugin))]
 #![cfg_attr(feature = "servo", plugin(plugins))]
 
 #![deny(warnings)]
@@ -59,10 +58,11 @@ extern crate encoding;
 extern crate euclid;
 extern crate fnv;
 extern crate heapsize;
+#[cfg(feature = "servo")] #[macro_use] extern crate heapsize_derive;
 #[allow(unused_extern_crates)]
 #[macro_use]
 extern crate lazy_static;
-extern crate libc;
+#[cfg(feature = "gecko")] extern crate libc;
 #[macro_use]
 extern crate log;
 #[allow(unused_extern_crates)]
@@ -73,6 +73,7 @@ extern crate num_integer;
 extern crate num_traits;
 #[cfg(feature = "gecko")] extern crate num_cpus;
 extern crate ordered_float;
+extern crate owning_ref;
 extern crate parking_lot;
 extern crate quickersort;
 extern crate rand;
@@ -86,6 +87,8 @@ extern crate smallvec;
 #[macro_use]
 extern crate style_traits;
 extern crate time;
+#[allow(unused_extern_crates)]
+extern crate unicode_segmentation;
 extern crate url;
 extern crate util;
 
@@ -112,6 +115,7 @@ pub mod keyframes;
 pub mod logical_geometry;
 pub mod matching;
 pub mod media_queries;
+pub mod owning_handle;
 pub mod parallel;
 pub mod parser;
 pub mod refcell;
@@ -133,6 +137,8 @@ pub mod values;
 pub mod viewport;
 pub mod workqueue;
 
+use cssparser::ToCss;
+use std::fmt;
 use std::sync::Arc;
 
 /// The CSS properties supported by the style system.
@@ -171,4 +177,17 @@ pub fn arc_ptr_eq<T: 'static>(a: &Arc<T>, b: &Arc<T>) -> bool {
     let a: &T = &**a;
     let b: &T = &**b;
     (a as *const T) == (b as *const T)
+}
+
+pub fn serialize_comma_separated_list<W, T>(dest: &mut W, list: &[T])
+                                            -> fmt::Result where W: fmt::Write, T: ToCss {
+    if list.len() > 0 {
+        for item in &list[..list.len()-1] {
+            try!(item.to_css(dest));
+            try!(write!(dest, ", "));
+        }
+        list[list.len()-1].to_css(dest)
+    } else {
+        Ok(())
+    }
 }

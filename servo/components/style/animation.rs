@@ -9,7 +9,7 @@ use context::SharedStyleContext;
 use dom::{OpaqueNode, UnsafeNode};
 use euclid::point::Point2D;
 use keyframes::{KeyframesStep, KeyframesStepValue};
-use properties::{self, ComputedValues, Importance};
+use properties::{self, CascadeFlags, ComputedValues, Importance};
 use properties::animated_properties::{AnimatedProperty, TransitionProperty};
 use properties::longhands::animation_direction::computed_value::AnimationDirection;
 use properties::longhands::animation_iteration_count::computed_value::AnimationIterationCount;
@@ -397,11 +397,11 @@ fn compute_style_for_animation_step(context: &SharedStyleContext,
             };
             let (computed, _) = properties::cascade(context.viewport_size,
                                                     &[declaration_block],
-                                                    false,
                                                     Some(previous_style),
                                                     None,
                                                     None,
-                                                    context.error_reporter.clone());
+                                                    context.error_reporter.clone(),
+                                                    CascadeFlags::empty());
             computed
         }
     }
@@ -672,7 +672,7 @@ pub fn complete_expired_transitions(node: OpaqueNode, style: &mut Arc<ComputedVa
                                     context: &SharedStyleContext) -> bool {
     let had_animations_to_expire;
     {
-        let all_expired_animations = context.expired_animations.read().unwrap();
+        let all_expired_animations = context.expired_animations.read();
         let animations_to_expire = all_expired_animations.get(&node);
         had_animations_to_expire = animations_to_expire.is_some();
         if let Some(ref animations) = animations_to_expire {
@@ -686,7 +686,7 @@ pub fn complete_expired_transitions(node: OpaqueNode, style: &mut Arc<ComputedVa
     }
 
     if had_animations_to_expire {
-        context.expired_animations.write().unwrap().remove(&node);
+        context.expired_animations.write().remove(&node);
     }
 
     had_animations_to_expire

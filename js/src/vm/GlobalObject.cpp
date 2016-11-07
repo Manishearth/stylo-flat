@@ -98,7 +98,7 @@ js::GlobalObject::getTypedObjectModule() const {
 /* static */ bool
 GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key)
 {
-    if (key == JSProto_Wasm || key == JSProto_WebAssembly)
+    if (key == JSProto_WebAssembly)
         return !cx->options().wasm() || !wasm::HasCompilerSupport(cx);
 
 #ifdef ENABLE_SHARED_ARRAY_BUFFER
@@ -536,7 +536,6 @@ GlobalObject::initSelfHostingBuiltins(JSContext* cx, Handle<GlobalObject*> globa
            InitBareBuiltinCtor(cx, global, JSProto_Int32Array) &&
            InitBareWeakMapCtor(cx, global) &&
            InitStopIterationClass(cx, global) &&
-           InitSelfHostingCollectionIteratorFunctions(cx, global) &&
            DefineFunctions(cx, global, builtins, AsIntrinsic);
 }
 

@@ -213,6 +213,8 @@ this.IsolationTestTools = {
       // Make sure preferences are set properly.
       yield SpecialPowers.pushPrefEnv({"set": aPref});
 
+      yield SpecialPowers.pushPrefEnv({"set": [["dom.ipc.processCount", 1]]});
+
       yield aTask(aMode);
     });
   },
@@ -278,6 +280,11 @@ this.IsolationTestTools = {
     let pageURL;
     let firstFrameSetting;
     let secondFrameSetting;
+
+    // Request a longer timeout since the test will run a test for three times
+    // with different settings. Thus, one test here represents three tests.
+    // For this reason, we triple the timeout.
+    requestLongerTimeout(3);
 
     if (typeof aURL === "string") {
       pageURL = aURL;

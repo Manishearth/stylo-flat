@@ -25,6 +25,7 @@
 #include "nsStyleUtil.h"
 #include "nsDeviceContext.h"
 #include "nsStyleSet.h"
+#include "nsContentUtils.h"
 
 using namespace mozilla;
 
@@ -342,10 +343,38 @@ nsCSSValue::GetAngleValueInRadians() const
   }
 }
 
+double
+nsCSSValue::GetAngleValueInDegrees() const
+{
+  double angle = GetFloatValue();
+
+  switch (GetUnit()) {
+    case eCSSUnit_Degree: return angle;
+    case eCSSUnit_Grad:   return angle * 0.9; // grad / 400 * 360
+    case eCSSUnit_Radian: return angle * 180.0 / M_PI;  // rad / 2pi * 360
+    case eCSSUnit_Turn:   return angle * 360.0;
+
+    default:
+      MOZ_ASSERT(false, "unrecognized angular unit");
+      return 0.0;
+  }
+}
+
 imgRequestProxy* nsCSSValue::GetImageValue(nsIDocument* aDocument) const
 {
   MOZ_ASSERT(mUnit == eCSSUnit_Image, "not an Image value");
   return mValue.mImage->mRequests.GetWeak(aDocument);
+}
+
+already_AddRefed<imgRequestProxy>
+nsCSSValue::GetPossiblyStaticImageValue(nsIDocument* aDocument,
+                                        nsPresContext* aPresContext) const
+{
+  imgRequestProxy* req = GetImageValue(aDocument);
+  if (aPresContext->IsDynamic()) {
+    return do_AddRef(req);
+  }
+  return nsContentUtils::GetStaticRequest(req);
 }
 
 nscoord nsCSSValue::GetFixedLength(nsPresContext* aPresContext) const
@@ -1189,7 +1218,8 @@ nsCSSValue::AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
   // eCSSProperty_UNKNOWN gets used for some recursive calls below.
   MOZ_ASSERT((0 <= aProperty &&
               aProperty <= eCSSProperty_COUNT_no_shorthands) ||
-             aProperty == eCSSProperty_UNKNOWN,
+             aProperty == eCSSProperty_UNKNOWN ||
+             aProperty == eCSSProperty_DOM,
              "property ID out of range");
 
   nsCSSUnit unit = GetUnit();
@@ -1281,10 +1311,24 @@ nsCSSValue::AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
     const nsCSSValue& functionName = array->Item(0);
     MOZ_ASSERT(functionName.GetUnit() == eCSSUnit_Enumerated,
                "Functions must have an enumerated name.");
-
-    /* Append the function name. */
     // The first argument is always of nsCSSKeyword type.
     const nsCSSKeyword functionId = functionName.GetKeywordValue();
+
+    // minmax(auto, <flex>) is equivalent to (and is our internal representation
+    // of) <flex>, and both are serialized as <flex>
+    if (functionId == eCSSKeyword_minmax &&
+        array->Count() == 3 &&
+        array->Item(1).GetUnit() == eCSSUnit_Auto &&
+        array->Item(2).GetUnit() == eCSSUnit_FlexFraction) {
+      array->Item(2).AppendToString(aProperty, aResult, aSerialization);
+      MOZ_ASSERT(aProperty == eCSSProperty_grid_template_columns ||
+                 aProperty == eCSSProperty_grid_template_rows ||
+                 aProperty == eCSSProperty_grid_auto_columns ||
+                 aProperty == eCSSProperty_grid_auto_rows);
+      return;
+    }
+
+    /* Append the function name. */
     NS_ConvertASCIItoUTF16 ident(nsCSSKeywords::GetStringValue(functionId));
     // Bug 721136: Normalize the identifier to lowercase, except that things
     // like scaleX should have the last character capitalized.  This matches
@@ -1541,12 +1585,14 @@ nsCSSValue::AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
         // round-tripping of all other rgba() values.
         aResult.AppendLiteral("transparent");
       } else {
+        // For brevity, we omit the alpha component if it's equal to 255 (full
+        // opaque). Also, we try to preserve the author-specified function name,
+        // unless it's rgba() and we're omitting the alpha component - then we
+        // use rgb().
         uint8_t a = NS_GET_A(color);
-        bool showAlpha =
-          (aSerialization == eNormalized && a < 255) ||
-          (aSerialization == eAuthorSpecified &&
-           unit == eCSSUnit_RGBAColor);
-        if (showAlpha) {
+        bool showAlpha = (a != 255);
+
+        if (unit == eCSSUnit_RGBAColor && showAlpha) {
           aResult.AppendLiteral("rgba(");
         } else {
           aResult.AppendLiteral("rgb(");
@@ -2398,7 +2444,8 @@ nsCSSRect::AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
 
   if (eCSSProperty_border_image_slice == aProperty ||
       eCSSProperty_border_image_width == aProperty ||
-      eCSSProperty_border_image_outset == aProperty) {
+      eCSSProperty_border_image_outset == aProperty ||
+      eCSSProperty_DOM == aProperty) {
     NS_NAMED_LITERAL_STRING(space, " ");
 
     mTop.AppendToString(aProperty, aResult, aSerialization);
@@ -2848,7 +2895,24 @@ css::ImageValue::ImageValue(nsIURI* aURI, nsStringBuffer* aString,
                  do_AddRef(new PtrHolder<nsIURI>(aReferrer)),
                  do_AddRef(new PtrHolder<nsIPrincipal>(aOriginPrincipal)))
 {
+  Initialize(aDocument);
+}
+
+css::ImageValue::ImageValue(
+    nsStringBuffer* aString,
+    already_AddRefed<PtrHolder<nsIURI>> aBaseURI,
+    already_AddRefed<PtrHolder<nsIURI>> aReferrer,
+    already_AddRefed<PtrHolder<nsIPrincipal>> aOriginPrincipal)
+  : URLValueData(aString, Move(aBaseURI), Move(aReferrer),
+                 Move(aOriginPrincipal))
+{
+}
+
+void
+css::ImageValue::Initialize(nsIDocument* aDocument)
+{
   MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!mInitialized);
 
   // NB: If aDocument is not the original document, we may not be able to load
   // images from aDocument.  Instead we do the image load from the original doc
@@ -2858,12 +2922,16 @@ css::ImageValue::ImageValue(nsIURI* aURI, nsStringBuffer* aString,
     loadingDoc = aDocument;
   }
 
-  loadingDoc->StyleImageLoader()->LoadImage(aURI, aOriginPrincipal, aReferrer,
-                                            this);
+  loadingDoc->StyleImageLoader()->LoadImage(GetURI(), mOriginPrincipal,
+                                            mReferrer, this);
 
   if (loadingDoc != aDocument) {
     aDocument->StyleImageLoader()->MaybeRegisterCSSImage(this);
   }
+
+#ifdef DEBUG
+  mInitialized = true;
+#endif
 }
 
 css::ImageValue::~ImageValue()
@@ -3033,19 +3101,22 @@ nsCSSValueFloatColor::IsNonTransparentColor() const
 void
 nsCSSValueFloatColor::AppendToString(nsCSSUnit aUnit, nsAString& aResult) const
 {
+  // Similar to the rgb()/rgba() case in nsCSSValue::AppendToString. We omit the
+  // alpha component if it's equal to 1.0f (full opaque). Also, we try to
+  // preserve the author-specified function name, unless it's rgba()/hsla() and
+  // we're omitting the alpha component - then we use rgb()/hsl().
   MOZ_ASSERT(nsCSSValue::IsFloatColorUnit(aUnit), "unexpected unit");
 
-  bool hasAlpha = aUnit == eCSSUnit_PercentageRGBAColor ||
-                  aUnit == eCSSUnit_HSLAColor;
-  bool isHSL = aUnit == eCSSUnit_HSLColor ||
-               aUnit == eCSSUnit_HSLAColor;
+  bool showAlpha = (mAlpha != 1.0f);
+  bool isHSL = (aUnit == eCSSUnit_HSLColor ||
+                aUnit == eCSSUnit_HSLAColor);
 
   if (isHSL) {
     aResult.AppendLiteral("hsl");
   } else {
     aResult.AppendLiteral("rgb");
   }
-  if (hasAlpha) {
+  if (showAlpha && (aUnit == eCSSUnit_HSLAColor || aUnit == eCSSUnit_PercentageRGBAColor)) {
     aResult.AppendLiteral("a(");
   } else {
     aResult.Append('(');
@@ -3060,7 +3131,7 @@ nsCSSValueFloatColor::AppendToString(nsCSSUnit aUnit, nsAString& aResult) const
   aResult.AppendFloat(mComponent2 * 100.0f);
   aResult.AppendLiteral("%, ");
   aResult.AppendFloat(mComponent3 * 100.0f);
-  if (hasAlpha) {
+  if (showAlpha) {
     aResult.AppendLiteral("%, ");
     aResult.AppendFloat(mAlpha);
     aResult.Append(')');

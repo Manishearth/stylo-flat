@@ -12,6 +12,15 @@ Cu.import("resource://gre/modules/Task.jsm");
 
 this.EXPORTED_SYMBOLS = ["BookmarkValidator", "BookmarkProblemData"];
 
+const LEFT_PANE_ROOT_ANNO = "PlacesOrganizer/OrganizerFolder";
+const LEFT_PANE_QUERY_ANNO = "PlacesOrganizer/OrganizerQuery";
+
+// Indicates if a local bookmark tree node should be excluded from syncing.
+function isNodeIgnored(treeNode) {
+  return treeNode.annos && treeNode.annos.some(anno => anno.name == LEFT_PANE_ROOT_ANNO ||
+                                                       anno.name == LEFT_PANE_QUERY_ANNO);
+}
+
 /**
  * Result of bookmark validation. Contains the following fields which describe
  * server-side problems unless otherwise specified.
@@ -41,6 +50,8 @@ this.EXPORTED_SYMBOLS = ["BookmarkValidator", "BookmarkProblemData"];
  * - parentNotFolder (array of ids): list of records that have parents that
  *   aren't folders
  * - rootOnServer (boolean): true if the root came from the server
+ * - badClientRoots (array of ids): Contains any client-side root ids where
+ *   the root is missing or isn't a (direct) child of the places root.
  *
  * - clientMissing: Array of ids on the server missing from the client
  * - serverMissing: Array of ids on the client missing from the server
@@ -70,6 +81,7 @@ class BookmarkProblemData {
     this.duplicateChildren = [];
     this.parentNotFolder = [];
 
+    this.badClientRoots = [];
     this.clientMissing = [];
     this.serverMissing = [];
     this.serverDeleted = [];
@@ -122,6 +134,7 @@ class BookmarkProblemData {
       { name: "parentChildMismatches", count: this.parentChildMismatches.length },
       { name: "cycles", count: this.cycles.length },
       { name: "clientCycles", count: this.clientCycles.length },
+      { name: "badClientRoots", count: this.badClientRoots.length },
       { name: "orphans", count: this.orphans.length },
       { name: "missingChildren", count: this.missingChildren.length },
       { name: "deletedChildren", count: this.deletedChildren.length },
@@ -198,7 +211,7 @@ class BookmarkValidator {
     function traverse(treeNode) {
       let guid = PlacesSyncUtils.bookmarks.guidToSyncId(treeNode.guid);
       let itemType = 'item';
-      treeNode.ignored = PlacesUtils.annotations.itemHasAnnotation(treeNode.id, PlacesUtils.EXCLUDE_FROM_BACKUP_ANNO);
+      treeNode.ignored = isNodeIgnored(treeNode);
       treeNode.id = guid;
       switch (treeNode.type) {
         case PlacesUtils.TYPE_X_MOZ_PLACE:
@@ -558,6 +571,24 @@ class BookmarkValidator {
     return cycles;
   }
 
+  // Perform client-side sanity checking that doesn't involve server data
+  _validateClient(problemData, clientRecords) {
+    problemData.clientCycles = this._detectCycles(clientRecords);
+    const rootsToCheck = [
+      PlacesUtils.bookmarks.menuGuid,
+      PlacesUtils.bookmarks.toolbarGuid,
+      PlacesUtils.bookmarks.unfiledGuid,
+      PlacesUtils.bookmarks.mobileGuid,
+    ];
+    for (let rootGUID of rootsToCheck) {
+      let record = clientRecords.find(record =>
+        record.guid === rootGUID);
+      if (!record || record.parentid !== "places") {
+        problemData.badClientRoots.push(rootGUID);
+      }
+    }
+  }
+
   /**
    * Compare the list of server records with the client tree.
    *
@@ -578,7 +609,7 @@ class BookmarkValidator {
     serverRecords = inspectionInfo.records;
     let problemData = inspectionInfo.problemData;
 
-    problemData.clientCycles = this._detectCycles(clientRecords);
+    this._validateClient(problemData, clientRecords);
 
     let matches = [];
 
@@ -698,7 +729,10 @@ class BookmarkValidator {
       item.decrypt(collectionKey);
       items.push(item.cleartext);
     };
-    collection.get();
+    let resp = collection.getBatched();
+    if (!resp.success) {
+      throw resp;
+    }
     return items;
   }
 

@@ -1363,7 +1363,7 @@ class Assembler : public AssemblerShared
     uint32_t spewResolve(Label* l);
     uint32_t spewProbe(Label* l);
     uint32_t spewDefine(Label* l);
-    void spew(const char* fmt, ...);
+    void spew(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
     void spew(const char* fmt, va_list args);
 #endif
 
@@ -1634,7 +1634,7 @@ class Assembler : public AssemblerShared
     BufferOffset as_b(BOffImm off, Condition c, Label* documentation = nullptr);
 
     BufferOffset as_b(Label* l, Condition c = Always);
-    BufferOffset as_b(wasm::JumpTarget target, Condition c = Always);
+    BufferOffset as_b(wasm::TrapDesc target, Condition c = Always);
     BufferOffset as_b(BOffImm off, Condition c, BufferOffset inst);
 
     // blx can go to either an immediate or a register. When blx'ing to a
@@ -1742,7 +1742,7 @@ class Assembler : public AssemblerShared
     bool nextLink(BufferOffset b, BufferOffset* next);
     void bind(Label* label, BufferOffset boff = BufferOffset());
     void bind(RepatchLabel* label);
-    void bindLater(Label* label, wasm::JumpTarget target);
+    void bindLater(Label* label, wasm::TrapDesc target);
     uint32_t currentOffset() {
         return nextOffset().getOffset();
     }

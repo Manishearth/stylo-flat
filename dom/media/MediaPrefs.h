@@ -95,6 +95,9 @@ private:
   // VideoSink
   DECL_MEDIA_PREF("media.ruin-av-sync.enabled",               RuinAvSync, bool, false);
 
+  // Encrypted Media Extensions
+  DECL_MEDIA_PREF("media.clearkey.persistent-license.enabled", ClearKeyPersistentLicenseEnabled, bool, false);
+
   // PlatformDecoderModule
   DECL_MEDIA_PREF("media.apple.forcevda",                     AppleForceVDA, bool, false);
   DECL_MEDIA_PREF("media.gmp.insecure.allow",                 GMPAllowInsecure, bool, false);
@@ -112,6 +115,7 @@ private:
 #endif
 #ifdef MOZ_FFMPEG
   DECL_MEDIA_PREF("media.ffmpeg.enabled",                     PDMFFmpegEnabled, bool, true);
+  DECL_MEDIA_PREF("media.libavcodec.allow-obsolete",          LibavcodecAllowObsolete, bool, false);
 #endif
 #ifdef MOZ_FFVPX
   DECL_MEDIA_PREF("media.ffvpx.enabled",                      PDMFFVPXEnabled, bool, true);
@@ -119,12 +123,8 @@ private:
 #ifdef XP_WIN
   DECL_MEDIA_PREF("media.wmf.enabled",                        PDMWMFEnabled, bool, true);
   DECL_MEDIA_PREF("media.decoder-doctor.wmf-disabled-is-failure", DecoderDoctorWMFDisabledIsFailure, bool, false);
-  DECL_MEDIA_PREF("media.webm.intel_decoder.enabled",         PDMWMFIntelDecoderEnabled, bool, false);
-  DECL_MEDIA_PREF("media.wmf.low-latency.enabled",            PDMWMFLowLatencyEnabled, bool, false);
+  DECL_MEDIA_PREF("media.wmf.vp9.enabled",                    PDMWMFVP9DecoderEnabled, bool, true);
   DECL_MEDIA_PREF("media.wmf.decoder.thread-count",           PDMWMFThreadCount, int32_t, -1);
-  DECL_MEDIA_PREF("media.wmf.skip-blacklist",                 PDMWMFSkipBlacklist, bool, false);
-  DECL_MEDIA_PREF("media.windows-media-foundation.max-dxva-videos", PDMWMFMaxDXVAVideos, uint32_t, 8);
-  DECL_MEDIA_PREF("media.windows-media-foundation.allow-d3d11-dxva", PDMWMFAllowD3D11, bool, true);
 #endif
   DECL_MEDIA_PREF("media.decoder.fuzzing.enabled",            PDMFuzzingEnabled, bool, false);
   DECL_MEDIA_PREF("media.decoder.fuzzing.video-output-minimum-interval-ms", PDMFuzzingInterval, uint32_t, 0);

@@ -57,7 +57,7 @@ use js::jsapi::{GCTraceKindToAscii, Heap, JSObject, JSTracer, TraceKind};
 use js::jsval::JSVal;
 use js::rust::Runtime;
 use libc;
-use msg::constellation_msg::{FrameId, FrameType, PipelineId, ReferrerPolicy, WindowSizeType};
+use msg::constellation_msg::{FrameId, FrameType, PipelineId, ReferrerPolicy};
 use net_traits::{Metadata, NetworkError, ResourceThreads};
 use net_traits::filemanager_thread::RelativePos;
 use net_traits::image::base::{Image, ImageMetadata};
@@ -73,12 +73,13 @@ use script_layout_interface::OpaqueStyleAndLayoutData;
 use script_layout_interface::reporter::CSSErrorReporter;
 use script_layout_interface::rpc::LayoutRPC;
 use script_runtime::ScriptChan;
-use script_traits::{TimerEventId, TimerSource, TouchpadPressurePhase, UntrustedNodeAddress, WindowSizeData};
+use script_traits::{TimerEventId, TimerSource, TouchpadPressurePhase};
+use script_traits::{UntrustedNodeAddress, WindowSizeData, WindowSizeType};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::boxed::FnBox;
 use std::cell::{Cell, UnsafeCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{BuildHasher, Hash};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
@@ -90,6 +91,7 @@ use std::time::{SystemTime, Instant};
 use string_cache::{Atom, Namespace, QualName};
 use style::attr::{AttrIdentifier, AttrValue, LengthOrPercentageOrAuto};
 use style::element_state::*;
+use style::media_queries::MediaQueryList;
 use style::properties::PropertyDeclarationBlock;
 use style::selector_impl::{ElementSnapshot, PseudoElement};
 use style::values::specified::Length;
@@ -200,6 +202,15 @@ impl JSTraceable for Heap<JSVal> {
 // XXXManishearth Check if the following three are optimized to no-ops
 // if e.trace() is a no-op (e.g it is an no_jsmanaged_fields type)
 impl<T: JSTraceable> JSTraceable for Vec<T> {
+    #[inline]
+    fn trace(&self, trc: *mut JSTracer) {
+        for e in &*self {
+            e.trace(trc);
+        }
+    }
+}
+
+impl<T: JSTraceable> JSTraceable for VecDeque<T> {
     #[inline]
     fn trace(&self, trc: *mut JSTracer) {
         for e in &*self {
@@ -357,7 +368,7 @@ no_jsmanaged_fields!(WebGLProgramId);
 no_jsmanaged_fields!(WebGLRenderbufferId);
 no_jsmanaged_fields!(WebGLShaderId);
 no_jsmanaged_fields!(WebGLTextureId);
-
+no_jsmanaged_fields!(MediaQueryList);
 
 impl JSTraceable for Box<ScriptChan + Send> {
     #[inline]

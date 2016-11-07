@@ -4,13 +4,27 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 DIRS += [
-    'har'
+    'actions',
+    'components',
+    'har',
+    'reducers',
+    'selectors'
 ]
 
 DevToolsModules(
+    'constants.js',
+    'custom-request-view.js',
+    'events.js',
     'filter-predicates.js',
+    'l10n.js',
     'panel.js',
+    'performance-statistics-view.js',
+    'prefs.js',
     'request-utils.js',
+    'requests-menu-view.js',
+    'sort-predicates.js',
+    'store.js',
+    'toolbar-view.js',
 )
 
 BROWSER_CHROME_MANIFESTS += ['test/browser.ini']

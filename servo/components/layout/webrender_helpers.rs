@@ -13,7 +13,7 @@ use euclid::{Point2D, Rect, Size2D};
 use gfx::display_list::{BorderRadii, BoxShadowClipMode, ClippingRegion};
 use gfx::display_list::{DisplayItem, DisplayList, DisplayListTraversal};
 use gfx::display_list::{GradientStop, StackingContext, StackingContextType};
-use gfx_traits::{FragmentType, ScrollPolicy, StackingContextId};
+use gfx_traits::{FragmentType, ScrollPolicy, StackingContextId, ScrollRootId};
 use style::computed_values::{image_rendering, mix_blend_mode};
 use style::computed_values::filter::{self, Filter};
 use style::values::computed::BorderStyle;
@@ -25,8 +25,6 @@ trait WebRenderStackingContextConverter {
                                 api: &mut webrender_traits::RenderApi,
                                 pipeline_id: webrender_traits::PipelineId,
                                 epoch: webrender_traits::Epoch,
-                                scroll_layer_id: Option<webrender_traits::ScrollLayerId>,
-                                scroll_policy: ScrollPolicy,
                                 frame_builder: &mut WebRenderFrameBuilder)
                                 -> webrender_traits::StackingContextId;
 
@@ -35,8 +33,6 @@ trait WebRenderStackingContextConverter {
                                          api: &mut webrender_traits::RenderApi,
                                          pipeline_id: webrender_traits::PipelineId,
                                          epoch: webrender_traits::Epoch,
-                                         scroll_layer_id: Option<webrender_traits::ScrollLayerId>,
-                                         scroll_policy: ScrollPolicy,
                                          builder: &mut webrender_traits::DisplayListBuilder,
                                          frame_builder: &mut WebRenderFrameBuilder,
                                          force_positioned_stacking_level: bool);
@@ -47,7 +43,6 @@ pub trait WebRenderDisplayListConverter {
                             api: &mut webrender_traits::RenderApi,
                             pipeline_id: webrender_traits::PipelineId,
                             epoch: webrender_traits::Epoch,
-                            scroll_layer_id: Option<webrender_traits::ScrollLayerId>,
                             frame_builder: &mut WebRenderFrameBuilder)
                             -> webrender_traits::StackingContextId;
 }
@@ -165,6 +160,7 @@ impl ToClipRegion for ClippingRegion {
                                            complex_clipping_region.radii.to_border_radius(),
                                         )
                                    }).collect(),
+                                   None,
                                    &mut frame_builder.auxiliary_lists_builder)
     }
 }
@@ -218,7 +214,7 @@ trait ToImageRendering {
 impl ToImageRendering for image_rendering::T {
     fn to_image_rendering(&self) -> webrender_traits::ImageRendering {
         match *self {
-            image_rendering::T::crispedges => webrender_traits::ImageRendering::CrispEdges,
+            image_rendering::T::crisp_edges => webrender_traits::ImageRendering::CrispEdges,
             image_rendering::T::auto => webrender_traits::ImageRendering::Auto,
             image_rendering::T::pixelated => webrender_traits::ImageRendering::Pixelated,
         }
@@ -255,45 +251,27 @@ impl WebRenderStackingContextConverter for StackingContext {
                                          api: &mut webrender_traits::RenderApi,
                                          pipeline_id: webrender_traits::PipelineId,
                                          epoch: webrender_traits::Epoch,
-                                         scroll_layer_id: Option<webrender_traits::ScrollLayerId>,
-                                         scroll_policy: ScrollPolicy,
                                          builder: &mut webrender_traits::DisplayListBuilder,
                                          frame_builder: &mut WebRenderFrameBuilder,
                                          _force_positioned_stacking_level: bool) {
-        for child in self.children() {
-            while let Some(item) = traversal.advance(self) {
-                item.convert_to_webrender(builder, frame_builder);
-            }
+        while let Some(item) = traversal.next() {
+            match item {
+                &DisplayItem::PushStackingContext(ref stacking_context_item) => {
+                    let stacking_context = &stacking_context_item.stacking_context;
+                    debug_assert!(stacking_context.context_type == StackingContextType::Real);
 
-            if child.context_type == StackingContextType::Real {
-                let scroll_layer_id_for_children = if self.scrolls_overflow_area {
-                    scroll_layer_id
-                } else {
-                    None
-                };
-                let stacking_context_id = child.convert_to_webrender(traversal,
-                                                                     api,
-                                                                     pipeline_id,
-                                                                     epoch,
-                                                                     scroll_layer_id_for_children,
-                                                                     scroll_policy,
-                                                                     frame_builder);
-                builder.push_stacking_context(stacking_context_id);
-            } else {
-                child.convert_children_to_webrender(traversal,
-                                                    api,
-                                                    pipeline_id,
-                                                    epoch,
-                                                    scroll_layer_id,
-                                                    scroll_policy,
-                                                    builder,
-                                                    frame_builder,
-                                                    true);
-            }
-        }
+                    let stacking_context_id =
+                        stacking_context.convert_to_webrender(traversal,
+                                                              api,
+                                                              pipeline_id,
+                                                              epoch,
+                                                              frame_builder);
+                    builder.push_stacking_context(stacking_context_id);
 
-        while let Some(item) = traversal.advance(self) {
-            item.convert_to_webrender(builder, frame_builder);
+                }
+                &DisplayItem::PopStackingContext(_) => return,
+                _ => item.convert_to_webrender(builder, frame_builder),
+            }
         }
     }
 
@@ -302,24 +280,23 @@ impl WebRenderStackingContextConverter for StackingContext {
                                 api: &mut webrender_traits::RenderApi,
                                 pipeline_id: webrender_traits::PipelineId,
                                 epoch: webrender_traits::Epoch,
-                                mut scroll_layer_id: Option<webrender_traits::ScrollLayerId>,
-                                mut scroll_policy: ScrollPolicy,
                                 frame_builder: &mut WebRenderFrameBuilder)
                                 -> webrender_traits::StackingContextId {
-        if let Some(ref layer_info) = self.layer_info {
-            scroll_policy = layer_info.scroll_policy
-        }
-
-        let webrender_scroll_policy = match scroll_policy {
+        let webrender_scroll_policy = match self.scroll_policy {
             ScrollPolicy::Scrollable => webrender_traits::ScrollPolicy::Scrollable,
             ScrollPolicy::FixedPosition => webrender_traits::ScrollPolicy::Fixed,
         };
 
-        let webrender_stacking_context_id = self.id.convert_to_webrender();
+        let scroll_layer_id = if let Some(scroll_root_id) = self.overflow_scroll_id {
+            Some(frame_builder.next_scroll_layer_id(scroll_root_id))
+        } else if self.id == StackingContextId::root() {
+            Some(frame_builder.next_scroll_layer_id(ScrollRootId::root()))
+        } else {
+            None
+        };
 
         let mut sc =
-            webrender_traits::StackingContext::new(webrender_stacking_context_id,
-                                                   scroll_layer_id,
+            webrender_traits::StackingContext::new(scroll_layer_id,
                                                    webrender_scroll_policy,
                                                    self.bounds.to_rectf(),
                                                    self.overflow.to_rectf(),
@@ -332,20 +309,14 @@ impl WebRenderStackingContextConverter for StackingContext {
                                                    &mut frame_builder.auxiliary_lists_builder);
 
         let mut builder = webrender_traits::DisplayListBuilder::new();
-
-        if self.scrolls_overflow_area {
-            scroll_layer_id = Some(frame_builder.next_scroll_layer_id());
-        }
-
         self.convert_children_to_webrender(traversal,
                                            api,
                                            pipeline_id,
                                            epoch,
-                                           scroll_layer_id,
-                                           scroll_policy,
                                            &mut builder,
                                            frame_builder,
                                            false);
+
         frame_builder.add_display_list(api, builder.finalize(), &mut sc);
         frame_builder.add_stacking_context(api, pipeline_id, sc)
     }
@@ -356,22 +327,22 @@ impl WebRenderDisplayListConverter for DisplayList {
                             api: &mut webrender_traits::RenderApi,
                             pipeline_id: webrender_traits::PipelineId,
                             epoch: webrender_traits::Epoch,
-                            scroll_layer_id: Option<webrender_traits::ScrollLayerId>,
                             frame_builder: &mut WebRenderFrameBuilder)
                             -> webrender_traits::StackingContextId {
-        let mut traversal = DisplayListTraversal {
-            display_list: self,
-            current_item_index: 0,
-            last_item_index: self.list.len() - 1,
-        };
+        let mut traversal = DisplayListTraversal::new(self);
+        let item = traversal.next();
+        match item {
+            Some(&DisplayItem::PushStackingContext(ref stacking_context_item)) => {
+                let stacking_context = &stacking_context_item.stacking_context;
+                stacking_context.convert_to_webrender(&mut traversal,
+                                                      api,
+                                                      pipeline_id,
+                                                      epoch,
+                                                      frame_builder)
+            }
+            _ => unreachable!("DisplayList did not start with StackingContext."),
 
-        self.root_stacking_context.convert_to_webrender(&mut traversal,
-                                                        api,
-                                                        pipeline_id,
-                                                        epoch,
-                                                        scroll_layer_id,
-                                                        ScrollPolicy::Scrollable,
-                                                        frame_builder)
+        }
     }
 }
 
@@ -380,7 +351,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                             builder: &mut webrender_traits::DisplayListBuilder,
                             frame_builder: &mut WebRenderFrameBuilder) {
         match *self {
-            DisplayItem::SolidColorClass(ref item) => {
+            DisplayItem::SolidColor(ref item) => {
                 let color = item.color.to_colorf();
                 if color.a > 0.0 {
                     builder.push_rect(item.base.bounds.to_rectf(),
@@ -388,7 +359,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                       color);
                 }
             }
-            DisplayItem::TextClass(ref item) => {
+            DisplayItem::Text(ref item) => {
                 let mut origin = item.baseline_origin.clone();
                 let mut glyphs = vec!();
 
@@ -416,14 +387,14 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                     builder.push_text(item.base.bounds.to_rectf(),
                                       item.base.clip.to_clip_region(frame_builder),
                                       glyphs,
-                                      item.text_run.font_key.expect("Font not added to webrender!"),
+                                      item.text_run.font_key,
                                       item.text_color.to_colorf(),
                                       item.text_run.actual_pt_size,
                                       item.blur_radius,
                                       &mut frame_builder.auxiliary_lists_builder);
                 }
             }
-            DisplayItem::ImageClass(ref item) => {
+            DisplayItem::Image(ref item) => {
                 if let Some(id) = item.webrender_image.key {
                     if item.stretch_size.width > Au(0) &&
                        item.stretch_size.height > Au(0) {
@@ -436,12 +407,12 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                     }
                 }
             }
-            DisplayItem::WebGLClass(ref item) => {
+            DisplayItem::WebGL(ref item) => {
                 builder.push_webgl_canvas(item.base.bounds.to_rectf(),
                                           item.base.clip.to_clip_region(frame_builder),
                                           item.context_id);
             }
-            DisplayItem::BorderClass(ref item) => {
+            DisplayItem::Border(ref item) => {
                 let rect = item.base.bounds.to_rectf();
                 let left = webrender_traits::BorderSide {
                     width: item.border_widths.left.to_f32_px(),
@@ -472,7 +443,7 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                     bottom,
                                     radius);
             }
-            DisplayItem::GradientClass(ref item) => {
+            DisplayItem::Gradient(ref item) => {
                 let rect = item.base.bounds.to_rectf();
                 let start_point = item.start_point.to_pointf();
                 let end_point = item.end_point.to_pointf();
@@ -487,13 +458,10 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                       stops,
                                       &mut frame_builder.auxiliary_lists_builder);
             }
-            DisplayItem::LineClass(..) => {
-                println!("TODO DisplayItem::LineClass");
+            DisplayItem::Line(..) => {
+                println!("TODO DisplayItem::Line");
             }
-            DisplayItem::LayeredItemClass(..) => {
-                panic!("Unexpected in webrender!");
-            }
-            DisplayItem::BoxShadowClass(ref item) => {
+            DisplayItem::BoxShadow(ref item) => {
                 let rect = item.base.bounds.to_rectf();
                 let box_bounds = item.box_bounds.to_rectf();
                 builder.push_box_shadow(rect,
@@ -506,13 +474,14 @@ impl WebRenderDisplayItemConverter for DisplayItem {
                                         item.border_radius.to_f32_px(),
                                         item.clip_mode.to_clip_mode());
             }
-            DisplayItem::IframeClass(ref item) => {
+            DisplayItem::Iframe(ref item) => {
                 let rect = item.base.bounds.to_rectf();
                 let pipeline_id = item.iframe.to_webrender();
                 builder.push_iframe(rect,
                                     item.base.clip.to_clip_region(frame_builder),
                                     pipeline_id);
             }
+            DisplayItem::PushStackingContext(_) | DisplayItem::PopStackingContext(_) => {}
         }
     }
 }
@@ -561,21 +530,25 @@ impl WebRenderFrameBuilder {
         id
     }
 
-    pub fn next_scroll_layer_id(&mut self) -> webrender_traits::ScrollLayerId {
+    pub fn next_scroll_layer_id(&mut self,
+                                scroll_root_id: ScrollRootId)
+                                -> webrender_traits::ScrollLayerId {
         let scroll_layer_id = self.next_scroll_layer_id;
         self.next_scroll_layer_id += 1;
-        webrender_traits::ScrollLayerId::new(self.root_pipeline_id, scroll_layer_id)
+        webrender_traits::ScrollLayerId::new(self.root_pipeline_id,
+                                             scroll_layer_id,
+                                             scroll_root_id.convert_to_webrender())
+
     }
 }
 
-trait WebRenderStackingContextIdConverter {
-    fn convert_to_webrender(&self) -> webrender_traits::ServoStackingContextId;
+trait WebRenderScrollRootIdConverter {
+    fn convert_to_webrender(&self) -> webrender_traits::ServoScrollRootId;
 }
 
-impl WebRenderStackingContextIdConverter for StackingContextId {
-    fn convert_to_webrender(&self) -> webrender_traits::ServoStackingContextId {
-        webrender_traits::ServoStackingContextId(self.fragment_type().convert_to_webrender(),
-                                                 self.id())
+impl WebRenderScrollRootIdConverter for ScrollRootId {
+    fn convert_to_webrender(&self) -> webrender_traits::ServoScrollRootId {
+        webrender_traits::ServoScrollRootId(self.0)
     }
 }
 

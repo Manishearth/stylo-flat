@@ -52,19 +52,7 @@ linux-dev:
   - ./mach test-stylo
   - bash ./etc/ci/lockfile_changed.sh
   - bash ./etc/ci/manifest_changed.sh
-  - bash ./etc/ci/check_no_unwrap.sh
-
-linux-dev-yaml:
-  - ./mach test-tidy --no-progress --all
-  - ./mach test-tidy --no-progress --self-test
-  - ./mach build --dev
-  - ./mach test-compiletest
-  - ./mach test-unit
-  - ./mach build-cef
-  - ./mach build-geckolib
-  - bash ./etc/ci/lockfile_changed.sh
-  - bash ./etc/ci/manifest_changed.sh
-  - bash ./etc/ci/check_no_unwrap.sh
+  - bash ./etc/ci/check_no_panic.sh
 
 linux-rel-wpt:
   - ./mach build --release
@@ -77,6 +65,7 @@ linux-rel-css:
   - ./mach test-css --release --processes 16 --log-raw test-css.log --log-errorsummary css-errorsummary.log
   - ./mach build-cef --release
   - ./mach build-geckolib --release
+  - ./mach test-stylo --release
   - bash ./etc/ci/lockfile_changed.sh
   - bash ./etc/ci/manifest_changed.sh
 

@@ -171,25 +171,18 @@ public:
   // Check to see if any active request requires high accuracy
   bool HighAccuracyRequested();
 
-  // Notification from the service:
-  void ServiceReady();
-
 private:
 
   ~Geolocation();
 
   nsresult GetCurrentPosition(GeoPositionCallback aCallback,
                               GeoPositionErrorCallback aErrorCallback,
-                              nsAutoPtr<PositionOptions>&& aOptions);
+                              UniquePtr<PositionOptions>&& aOptions);
   nsresult WatchPosition(GeoPositionCallback aCallback,
                          GeoPositionErrorCallback aErrorCallback,
-                         nsAutoPtr<PositionOptions>&& aOptions, int32_t* aRv);
+                         UniquePtr<PositionOptions>&& aOptions, int32_t* aRv);
 
   bool RegisterRequestWithPrompt(nsGeolocationRequest* request);
-
-  // Methods for the service when it's ready to process requests:
-  nsresult GetCurrentPositionReady(nsGeolocationRequest* aRequest);
-  nsresult WatchPositionReady(nsGeolocationRequest* aRequest);
 
   // Check if clearWatch is already called
   bool IsAlreadyCleared(nsGeolocationRequest* aRequest);

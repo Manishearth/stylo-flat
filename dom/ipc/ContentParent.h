@@ -67,7 +67,6 @@ class PJavaScriptParent;
 } // namespace jsipc
 
 namespace layers {
-class PSharedBufferManagerParent;
 struct TextureFactoryIdentifier;
 } // namespace layers
 
@@ -136,7 +135,8 @@ public:
   GetNewOrUsedBrowserProcess(bool aForBrowserElement = false,
                              hal::ProcessPriority aPriority =
                              hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
-                             ContentParent* aOpener = nullptr);
+                             ContentParent* aOpener = nullptr,
+                             bool aLargeAllocationProcess = false);
 
   /**
    * Create a subprocess suitable for use as a preallocated app process.
@@ -151,7 +151,8 @@ public:
   static TabParent*
   CreateBrowserOrApp(const TabContext& aContext,
                      Element* aFrameElement,
-                     ContentParent* aOpenerContentParent);
+                     ContentParent* aOpenerContentParent,
+                     bool aFreshProcess = false);
 
   static void GetAll(nsTArray<ContentParent*>& aArray);
 
@@ -246,16 +247,6 @@ public:
   virtual bool RecvBridgeToChildProcess(const ContentParentId& aCpId) override;
 
   virtual bool RecvCreateGMPService() override;
-
-  virtual bool RecvGetGMPPluginVersionForAPI(const nsCString& aAPI,
-                                             nsTArray<nsCString>&& aTags,
-                                             bool* aHasPlugin,
-                                             nsCString* aVersion) override;
-
-  virtual bool RecvIsGMPPresentOnDisk(const nsString& aKeySystem,
-                                      const nsCString& aVersion,
-                                      bool* aIsPresent,
-                                      nsCString* aMessage) override;
 
   virtual bool RecvLoadPlugin(const uint32_t& aPluginId, nsresult* aRv,
                               uint32_t* aRunID) override;
@@ -574,6 +565,7 @@ protected:
 private:
   static nsDataHashtable<nsStringHashKey, ContentParent*> *sAppContentParents;
   static nsTArray<ContentParent*>* sNonAppContentParents;
+  static nsTArray<ContentParent*>* sLargeAllocationContentParents;
   static nsTArray<ContentParent*>* sPrivateContent;
   static StaticAutoPtr<LinkedList<ContentParent> > sContentParents;
 
@@ -701,10 +693,6 @@ private:
   PGMPServiceParent*
   AllocPGMPServiceParent(mozilla::ipc::Transport* aTransport,
                          base::ProcessId aOtherProcess) override;
-
-  PSharedBufferManagerParent*
-  AllocPSharedBufferManagerParent(mozilla::ipc::Transport* aTranport,
-                                   base::ProcessId aOtherProcess) override;
 
   PBackgroundParent*
   AllocPBackgroundParent(Transport* aTransport, ProcessId aOtherProcess)
@@ -843,31 +831,11 @@ private:
 
   virtual bool DeallocPHandlerServiceParent(PHandlerServiceParent*) override;
 
-  virtual PSmsParent* AllocPSmsParent() override;
-
-  virtual bool DeallocPSmsParent(PSmsParent*) override;
-
-  virtual PTelephonyParent* AllocPTelephonyParent() override;
-
-  virtual bool DeallocPTelephonyParent(PTelephonyParent*) override;
-
-  virtual PVoicemailParent* AllocPVoicemailParent() override;
-
-  virtual bool RecvPVoicemailConstructor(PVoicemailParent* aActor) override;
-
-  virtual bool DeallocPVoicemailParent(PVoicemailParent* aActor) override;
-
   virtual PMediaParent* AllocPMediaParent() override;
 
   virtual bool DeallocPMediaParent(PMediaParent* aActor) override;
 
   virtual bool DeallocPStorageParent(PStorageParent* aActor) override;
-
-  virtual PBluetoothParent* AllocPBluetoothParent() override;
-
-  virtual bool DeallocPBluetoothParent(PBluetoothParent* aActor) override;
-
-  virtual bool RecvPBluetoothConstructor(PBluetoothParent* aActor) override;
 
   virtual PPresentationParent* AllocPPresentationParent() override;
 
@@ -1222,6 +1190,7 @@ private:
   nsRefPtrHashtable<nsIDHashKey, GetFilesHelper> mGetFilesPendingRequests;
 
   nsTArray<nsCString> mBlobURLs;
+  bool mLargeAllocationProcess;
 };
 
 } // namespace dom

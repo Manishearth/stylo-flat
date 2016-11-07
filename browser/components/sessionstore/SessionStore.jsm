@@ -131,15 +131,16 @@ const TAB_EVENTS = [
 
 const NS_XUL = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
-Cu.import("resource://gre/modules/Services.jsm", this);
-Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
-Cu.import("resource://gre/modules/TelemetryTimestamps.jsm", this);
-Cu.import("resource://gre/modules/TelemetryStopwatch.jsm", this);
-Cu.import("resource://gre/modules/osfile.jsm", this);
 Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm", this);
 Cu.import("resource://gre/modules/Promise.jsm", this);
+Cu.import("resource://gre/modules/Services.jsm", this);
 Cu.import("resource://gre/modules/Task.jsm", this);
+Cu.import("resource://gre/modules/TelemetryStopwatch.jsm", this);
+Cu.import("resource://gre/modules/TelemetryTimestamps.jsm", this);
+Cu.import("resource://gre/modules/Timer.jsm", this);
+Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
 Cu.import("resource://gre/modules/debug.js", this);
+Cu.import("resource://gre/modules/osfile.jsm", this);
 
 XPCOMUtils.defineLazyServiceGetter(this, "gSessionStartup",
   "@mozilla.org/browser/sessionstartup;1", "nsISessionStartup");
@@ -179,7 +180,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "TabStateCache",
 XPCOMUtils.defineLazyModuleGetter(this, "TabStateFlusher",
   "resource:///modules/sessionstore/TabStateFlusher.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Utils",
-  "resource:///modules/sessionstore/Utils.jsm");
+  "resource://gre/modules/sessionstore/Utils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "ViewSourceBrowser",
   "resource://gre/modules/ViewSourceBrowser.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "AsyncShutdown",
@@ -208,6 +209,10 @@ this.SessionStore = {
 
   set canRestoreLastSession(val) {
     SessionStoreInternal.canRestoreLastSession = val;
+  },
+
+  get lastClosedObjectType() {
+    return SessionStoreInternal.lastClosedObjectType;
   },
 
   init: function ss_init() {
@@ -246,8 +251,8 @@ this.SessionStore = {
     return SessionStoreInternal.getClosedTabCount(aWindow);
   },
 
-  getClosedTabData: function ss_getClosedTabDataAt(aWindow) {
-    return SessionStoreInternal.getClosedTabData(aWindow);
+  getClosedTabData: function ss_getClosedTabData(aWindow, aAsString = true) {
+    return SessionStoreInternal.getClosedTabData(aWindow, aAsString);
   },
 
   undoCloseTab: function ss_undoCloseTab(aWindow, aIndex) {
@@ -262,8 +267,8 @@ this.SessionStore = {
     return SessionStoreInternal.getClosedWindowCount();
   },
 
-  getClosedWindowData: function ss_getClosedWindowData() {
-    return SessionStoreInternal.getClosedWindowData();
+  getClosedWindowData: function ss_getClosedWindowData(aAsString = true) {
+    return SessionStoreInternal.getClosedWindowData(aAsString);
   },
 
   undoCloseWindow: function ss_undoCloseWindow(aIndex) {
@@ -338,6 +343,10 @@ this.SessionStore = {
     return SessionStoreInternal.getSessionHistory(tab, updatedCallback);
   },
 
+  undoCloseById(aClosedId) {
+    return SessionStoreInternal.undoCloseById(aClosedId);
+  },
+
   /**
    * Determines whether the passed version number is compatible with
    * the current version number of the SessionStore.
@@ -376,6 +385,9 @@ var SessionStoreInternal = {
   ]),
 
   _globalState: new GlobalState(),
+
+  // A counter to be used to generate a unique ID for each closed tab or window.
+  _nextClosedId: 0,
 
   // During the initial restore and setBrowserState calls tracks the number of
   // windows yet to be restored
@@ -493,6 +505,33 @@ var SessionStoreInternal = {
     if (!val) {
       LastSession.clear();
     }
+  },
+
+  /**
+   * Returns a string describing the last closed object, either "tab" or "window".
+   *
+   * This was added to support the sessions.restore WebExtensions API.
+   */
+  get lastClosedObjectType() {
+    if (this._closedWindows.length) {
+      // Since there are closed windows, we need to check if there's a closed tab
+      // in one of the currently open windows that was closed after the
+      // last-closed window.
+      let tabTimestamps = [];
+      let windowsEnum = Services.wm.getEnumerator("navigator:browser");
+      while (windowsEnum.hasMoreElements()) {
+        let window = windowsEnum.getNext();
+        let windowState = this._windows[window.__SSi];
+        if (windowState && windowState._closedTabs[0]) {
+          tabTimestamps.push(windowState._closedTabs[0].closedAt);
+        }
+      }
+      if (!tabTimestamps.length ||
+          (tabTimestamps.sort((a, b) => b - a)[0] < this._closedWindows[0].closedAt)) {
+        return "window";
+      }
+    }
+    return "tab";
   },
 
   /**
@@ -1430,6 +1469,9 @@ var SessionStoreInternal = {
           index = this._closedWindows.length;
         }
 
+        // About to save the closed window, add a unique ID.
+        winData.closedId = this._nextClosedId++;
+
         // Insert tabData at the right position.
         this._closedWindows.splice(index, 0, winData);
         this._capClosedWindows();
@@ -1462,9 +1504,37 @@ var SessionStoreInternal = {
 
     if (!syncShutdown) {
       // We've got some time to shut down, so let's do this properly.
+      // To prevent blocker from breaking the 60 sec limit(which will cause a
+      // crash) of async shutdown during flushing all windows, we resolve the
+      // promise passed to blocker once:
+      // 1. the flushing exceed 50 sec, or
+      // 2. 'oop-frameloader-crashed' or 'ipc:content-shutdown' is observed.
+      // Thus, Firefox still can open the last session on next startup.
       AsyncShutdown.quitApplicationGranted.addBlocker(
         "SessionStore: flushing all windows",
-        this.flushAllWindowsAsync(progress),
+        () => {
+          var promises = [];
+          promises.push(this.flushAllWindowsAsync(progress));
+          promises.push(this.looseTimer(50000));
+
+          var promiseOFC = new Promise(resolve => {
+            Services.obs.addObserver(function obs(subject, topic) {
+              Services.obs.removeObserver(obs, topic);
+              resolve();
+            }, "oop-frameloader-crashed", false);
+          });
+          promises.push(promiseOFC);
+
+          var promiseICS = new Promise(resolve => {
+            Services.obs.addObserver(function obs(subject, topic) {
+              Services.obs.removeObserver(obs, topic);
+              resolve();
+            }, "ipc:content-shutdown", false);
+          });
+          promises.push(promiseICS);
+
+          return Promise.race(promises);
+        },
         () => progress);
     } else {
       // We have to shut down NOW, which means we only get to save whatever
@@ -1822,6 +1892,9 @@ var SessionStoreInternal = {
     if (index == -1) {
       index = closedTabs.length;
     }
+
+    // About to save the closed tab, add a unique ID.
+    tabData.closedId = this._nextClosedId++;
 
     // Insert tabData at the right position.
     closedTabs.splice(index, 0, tabData);
@@ -2184,9 +2257,11 @@ var SessionStoreInternal = {
     return DyingWindowCache.get(aWindow)._closedTabs.length;
   },
 
-  getClosedTabData: function ssi_getClosedTabDataAt(aWindow) {
+  getClosedTabData: function ssi_getClosedTabData(aWindow, aAsString = true) {
     if ("__SSi" in aWindow) {
-      return JSON.stringify(this._windows[aWindow.__SSi]._closedTabs);
+      return aAsString ?
+        JSON.stringify(this._windows[aWindow.__SSi]._closedTabs) :
+        Cu.cloneInto(this._windows[aWindow.__SSi]._closedTabs, {});
     }
 
     if (!DyingWindowCache.has(aWindow)) {
@@ -2194,7 +2269,7 @@ var SessionStoreInternal = {
     }
 
     let data = DyingWindowCache.get(aWindow);
-    return JSON.stringify(data._closedTabs);
+    return aAsString ? JSON.stringify(data._closedTabs) : Cu.cloneInto(data._closedTabs, {});
   },
 
   undoCloseTab: function ssi_undoCloseTab(aWindow, aIndex) {
@@ -2250,8 +2325,8 @@ var SessionStoreInternal = {
     return this._closedWindows.length;
   },
 
-  getClosedWindowData: function ssi_getClosedWindowData() {
-    return JSON.stringify(this._closedWindows);
+  getClosedWindowData: function ssi_getClosedWindowData(aAsString = true) {
+    return aAsString ? JSON.stringify(this._closedWindows) : Cu.cloneInto(this._closedWindows, {});
   },
 
   undoCloseWindow: function ssi_undoCloseWindow(aIndex) {
@@ -2365,6 +2440,42 @@ var SessionStoreInternal = {
     if (TabAttributes.persist(aName)) {
       this.saveStateDelayed();
     }
+  },
+
+
+  /**
+   * Undoes the closing of a tab or window which corresponds
+   * to the closedId passed in.
+   *
+   * @param aClosedId
+   *        The closedId of the tab or window
+   *
+   * @returns a tab or window object
+   */
+  undoCloseById(aClosedId) {
+    // Check for a window first.
+    for (let i = 0, l = this._closedWindows.length; i < l; i++) {
+      if (this._closedWindows[i].closedId == aClosedId) {
+        return this.undoCloseWindow(i);
+      }
+    }
+
+    // Check for a tab.
+    let windowsEnum = Services.wm.getEnumerator("navigator:browser");
+    while (windowsEnum.hasMoreElements()) {
+      let window = windowsEnum.getNext();
+      let windowState = this._windows[window.__SSi];
+      if (windowState) {
+        for (let j = 0, l = windowState._closedTabs.length; j < l; j++) {
+          if (windowState._closedTabs[j].closedId == aClosedId) {
+            return this.undoCloseTab(window, j);
+          }
+        }
+      }
+    }
+
+    // Neither a tab nor a window was found, return undefined and let the caller decide what to do about it.
+    return undefined;
   },
 
   /**
@@ -2583,7 +2694,13 @@ var SessionStoreInternal = {
       }
 
       let tabState = TabState.clone(tab);
-      let options = {restoreImmediately: true};
+      let options = {
+        restoreImmediately: true,
+        // We want to make sure that this information is passed to restoreTab
+        // whether or not a historyIndex is passed in. Thus, we extract it from
+        // the loadArguments.
+        reloadInFreshProcess: !!recentLoadArguments.reloadInFreshProcess,
+      };
 
       if (historyIndex >= 0) {
         tabState.index = historyIndex + 1;
@@ -3243,6 +3360,7 @@ var SessionStoreInternal = {
     let window = tab.ownerGlobal;
     let tabbrowser = window.gBrowser;
     let forceOnDemand = options.forceOnDemand;
+    let reloadInFreshProcess = options.reloadInFreshProcess;
 
     let willRestoreImmediately = restoreImmediately ||
                                  tabbrowser.selectedBrowser == browser ||
@@ -3365,7 +3483,7 @@ var SessionStoreInternal = {
     // This could cause us to ignore MAX_CONCURRENT_TAB_RESTORES a bit, but
     // it ensures each window will have its selected tab loaded.
     if (willRestoreImmediately) {
-      this.restoreTabContent(tab, loadArguments);
+      this.restoreTabContent(tab, loadArguments, reloadInFreshProcess);
     } else if (!forceOnDemand) {
       this.restoreNextTab();
     }
@@ -3381,11 +3499,10 @@ var SessionStoreInternal = {
    *        the tab to restore
    * @param aLoadArguments
    *        optional load arguments used for loadURI()
-   * @param aRemotenessSwitch
-   *        true if we're restoring a tab's content because we flipped
-   *        its remoteness (out-of-process) state.
+   * @param aReloadInFreshProcess
+   *        true if we want to reload into a fresh process
    */
-  restoreTabContent: function (aTab, aLoadArguments = null) {
+  restoreTabContent: function (aTab, aLoadArguments = null, aReloadInFreshProcess = false) {
     if (aTab.hasAttribute("customizemode")) {
       return;
     }
@@ -3410,7 +3527,13 @@ var SessionStoreInternal = {
     // flip the remoteness of any browser that is not being displayed.
     this.markTabAsRestoring(aTab);
 
-    let isRemotenessUpdate = tabbrowser.updateBrowserRemotenessByURL(browser, uri);
+    let isRemotenessUpdate = false;
+    if (aReloadInFreshProcess) {
+      isRemotenessUpdate = tabbrowser.switchBrowserIntoFreshProcess(browser);
+    } else {
+      isRemotenessUpdate = tabbrowser.updateBrowserRemotenessByURL(browser, uri);
+    }
+
     if (isRemotenessUpdate) {
       // We updated the remoteness, so we need to send the history down again.
       //
@@ -4328,6 +4451,33 @@ var SessionStoreInternal = {
         histogram.add(data.telemetry[key]);
       }
     }
+  },
+
+  /**
+   * Countdown for a given duration, skipping beats if the computer is too busy,
+   * sleeping or otherwise unavailable.
+   *
+   * @param {number} delay An approximate delay to wait in milliseconds (rounded
+   * up to the closest second).
+   *
+   * @return Promise
+   */
+  looseTimer(delay) {
+    let DELAY_BEAT = 1000;
+    let timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+    let beats = Math.ceil(delay / DELAY_BEAT);
+    let promise =  new Promise(resolve => {
+      timer.initWithCallback(function() {
+        if (beats <= 0) {
+          resolve();
+        }
+        --beats;
+      }, DELAY_BEAT, Ci.nsITimer.TYPE_REPEATING_PRECISE_CAN_SKIP);
+    });
+    // Ensure that the timer is both canceled once we are done with it
+    // and not garbage-collected until then.
+    promise.then(() => timer.cancel(), () => timer.cancel());
+    return promise;
   }
 };
 

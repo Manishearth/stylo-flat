@@ -31,6 +31,8 @@
 #include "mozilla/Unused.h"
 #include "Navigator.h"
 #include "URIUtils.h"
+#include "mozilla/dom/DocGroup.h"
+#include "mozilla/dom/TabGroup.h"
 
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
@@ -43,7 +45,6 @@
 #include "nsIDOMStorage.h"
 #include "nsIContentViewer.h"
 #include "nsIDocumentLoaderFactory.h"
-#include "nsIMozBrowserFrame.h"
 #include "nsCURILoader.h"
 #include "nsDocShellCID.h"
 #include "nsDOMCID.h"
@@ -1253,10 +1254,6 @@ nsDocShell::LoadURI(nsIURI* aURI,
     return NS_OK; // JS may not handle returning of an error code
   }
 
-  if (DoAppRedirectIfNeeded(aURI, aLoadInfo, aFirstParty)) {
-    return NS_OK;
-  }
-
   nsCOMPtr<nsIURI> referrer;
   nsCOMPtr<nsIURI> originalURI;
   bool loadReplace = false;
@@ -1547,7 +1544,7 @@ nsDocShell::LoadURI(nsIURI* aURI,
                       triggeringPrincipal,
                       principalToInherit,
                       flags,
-                      target.get(),
+                      target,
                       nullptr,      // No type hint
                       NullString(), // No forced download
                       postStream,
@@ -2493,7 +2490,7 @@ nsDocShell::SetAllowContentRetargetingOnChildren(
 NS_IMETHODIMP
 nsDocShell::GetInheritPrivateBrowsingId(bool* aInheritPrivateBrowsingId)
 {
-  *aInheritPrivateBrowsingId = mPrivateBrowsingId;
+  *aInheritPrivateBrowsingId = mInheritPrivateBrowsingId;
   return NS_OK;
 }
 
@@ -3153,9 +3150,8 @@ nsDocShell::SetName(const nsAString& aName)
 }
 
 NS_IMETHODIMP
-nsDocShell::NameEquals(const char16_t* aName, bool* aResult)
+nsDocShell::NameEquals(const nsAString& aName, bool* aResult)
 {
-  NS_ENSURE_ARG_POINTER(aName);
   NS_ENSURE_ARG_POINTER(aResult);
   *aResult = mName.Equals(aName);
   return NS_OK;
@@ -3654,18 +3650,17 @@ ItemIsActive(nsIDocShellTreeItem* aItem)
 }
 
 NS_IMETHODIMP
-nsDocShell::FindItemWithName(const char16_t* aName,
+nsDocShell::FindItemWithName(const nsAString& aName,
                              nsISupports* aRequestor,
                              nsIDocShellTreeItem* aOriginalRequestor,
                              nsIDocShellTreeItem** aResult)
 {
-  NS_ENSURE_ARG(aName);
   NS_ENSURE_ARG_POINTER(aResult);
 
   // If we don't find one, we return NS_OK and a null result
   *aResult = nullptr;
 
-  if (!*aName) {
+  if (aName.IsEmpty()) {
     return NS_OK;
   }
 
@@ -3679,48 +3674,20 @@ nsDocShell::FindItemWithName(const char16_t* aName,
     // for a null aRequestor.
 
     nsCOMPtr<nsIDocShellTreeItem> foundItem;
-    nsDependentString name(aName);
-    if (name.LowerCaseEqualsLiteral("_self")) {
+    if (aName.LowerCaseEqualsLiteral("_self")) {
       foundItem = this;
-    } else if (name.LowerCaseEqualsLiteral("_blank")) {
+    } else if (aName.LowerCaseEqualsLiteral("_blank")) {
       // Just return null.  Caller must handle creating a new window with
       // a blank name himself.
       return NS_OK;
-    } else if (name.LowerCaseEqualsLiteral("_parent")) {
+    } else if (aName.LowerCaseEqualsLiteral("_parent")) {
       GetSameTypeParent(getter_AddRefs(foundItem));
       if (!foundItem) {
         foundItem = this;
       }
-    } else if (name.LowerCaseEqualsLiteral("_top")) {
+    } else if (aName.LowerCaseEqualsLiteral("_top")) {
       GetSameTypeRootTreeItem(getter_AddRefs(foundItem));
       NS_ASSERTION(foundItem, "Must have this; worst case it's us!");
-    }
-    // _main is an IE target which should be case-insensitive but isn't
-    // see bug 217886 for details
-    else if (name.LowerCaseEqualsLiteral("_content") ||
-             name.EqualsLiteral("_main")) {
-      // Must pass our same type root as requestor to the
-      // treeowner to make sure things work right.
-      nsCOMPtr<nsIDocShellTreeItem> root;
-      GetSameTypeRootTreeItem(getter_AddRefs(root));
-      if (mTreeOwner) {
-        NS_ASSERTION(root, "Must have this; worst case it's us!");
-        mTreeOwner->FindItemWithName(aName, root, aOriginalRequestor,
-                                     getter_AddRefs(foundItem));
-      }
-#ifdef DEBUG
-      else {
-        NS_ERROR("Someone isn't setting up the tree owner.  "
-                 "You might like to try that.  "
-                 "Things will.....you know, work.");
-        // Note: _content should always exist.  If we don't have one
-        // hanging off the treeowner, just create a named window....
-        // so don't return here, in case we did that and can now find
-        // it.
-        // XXXbz should we be using |root| instead of creating
-        // a new window?
-      }
-#endif
     } else {
       // Do the search for item by an actual name.
       DoFindItemWithName(aName, aRequestor, aOriginalRequestor,
@@ -3746,14 +3713,14 @@ nsDocShell::AssertOriginAttributesMatchPrivateBrowsing() {
   // Content docshells must maintain the equality:
   // mOriginAttributes.mPrivateBrowsingId == mPrivateBrowsingId
   if (mItemType == typeChrome) {
-    MOZ_ASSERT(mOriginAttributes.mPrivateBrowsingId == 0);
+    MOZ_DIAGNOSTIC_ASSERT(mOriginAttributes.mPrivateBrowsingId == 0);
   } else {
-    MOZ_ASSERT(mOriginAttributes.mPrivateBrowsingId == mPrivateBrowsingId);
+    MOZ_DIAGNOSTIC_ASSERT(mOriginAttributes.mPrivateBrowsingId == mPrivateBrowsingId);
   }
 }
 
 nsresult
-nsDocShell::DoFindItemWithName(const char16_t* aName,
+nsDocShell::DoFindItemWithName(const nsAString& aName,
                                nsISupports* aRequestor,
                                nsIDocShellTreeItem* aOriginalRequestor,
                                nsIDocShellTreeItem** aResult)
@@ -3794,7 +3761,9 @@ nsDocShell::DoFindItemWithName(const char16_t* aName,
       return NS_OK;
     }
 
-    if (parentAsTreeItem->ItemType() == mItemType) {
+    // If we have a same-type parent, respecting browser and app boundaries.
+    // NOTE: Could use GetSameTypeParent if the issues described in bug 1310344 are fixed.
+    if (!GetIsMozBrowserOrApp() && parentAsTreeItem->ItemType() == mItemType) {
       return parentAsTreeItem->FindItemWithName(
         aName,
         static_cast<nsIDocShellTreeItem*>(this),
@@ -3803,14 +3772,16 @@ nsDocShell::DoFindItemWithName(const char16_t* aName,
     }
   }
 
-  // If the parent is null or not of the same type fall through and ask tree
-  // owner.
-
-  // This may fail, but comparing against null serves the same purpose
-  nsCOMPtr<nsIDocShellTreeOwner> reqAsTreeOwner(do_QueryInterface(aRequestor));
-  if (mTreeOwner && mTreeOwner != reqAsTreeOwner) {
-    return mTreeOwner->FindItemWithName(aName, this, aOriginalRequestor,
-                                        aResult);
+  // If we have a null parent or the parent is not of the same type, we need to
+  // give up on finding it in our tree, and start looking in our TabGroup.
+  nsCOMPtr<nsPIDOMWindowOuter> window = GetWindow();
+  if (window) {
+    RefPtr<mozilla::dom::TabGroup> tabGroup = window->TabGroup();
+    // We don't want to make the request to our TabGroup if they are the ones
+    // which made a request to us.
+    if (tabGroup != aRequestor) {
+      tabGroup->FindItemWithName(aName, this, aOriginalRequestor, aResult);
+    }
   }
 
   return NS_OK;
@@ -4195,19 +4166,18 @@ nsDocShell::GetChildAt(int32_t aIndex, nsIDocShellTreeItem** aChild)
 }
 
 NS_IMETHODIMP
-nsDocShell::FindChildWithName(const char16_t* aName,
+nsDocShell::FindChildWithName(const nsAString& aName,
                               bool aRecurse, bool aSameType,
                               nsIDocShellTreeItem* aRequestor,
                               nsIDocShellTreeItem* aOriginalRequestor,
                               nsIDocShellTreeItem** aResult)
 {
-  NS_ENSURE_ARG(aName);
   NS_ENSURE_ARG_POINTER(aResult);
 
   // if we don't find one, we return NS_OK and a null result
   *aResult = nullptr;
 
-  if (!*aName) {
+  if (aName.IsEmpty()) {
     return NS_OK;
   }
 
@@ -5377,7 +5347,7 @@ nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
 
   return InternalLoad(errorPageURI, nullptr, false, nullptr,
                       mozilla::net::RP_Default,
-                      nullptr, nullptr, INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL, nullptr,
+                      nullptr, nullptr, INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL, EmptyString(),
                       nullptr, NullString(), nullptr, nullptr, LOAD_ERROR_PAGE,
                       nullptr, true, NullString(), this, nullptr, nullptr,
                       nullptr);
@@ -5457,7 +5427,7 @@ nsDocShell::Reload(uint32_t aReloadFlags)
                       principal,
                       principal,
                       flags,
-                      nullptr,         // No window target
+                      EmptyString(),   // No window target
                       NS_LossyConvertUTF16toASCII(contentTypeHint).get(),
                       NullString(),    // No forced download
                       nullptr,         // No post data
@@ -6729,32 +6699,6 @@ nsDocShell::ForceRefreshURIFromTimer(nsIURI* aURI,
   return ForceRefreshURI(aURI, aDelay, aMetaRefresh);
 }
 
-bool
-nsDocShell::DoAppRedirectIfNeeded(nsIURI* aURI,
-                                  nsIDocShellLoadInfo* aLoadInfo,
-                                  bool aFirstParty)
-{
-  uint32_t appId = nsIDocShell::GetAppId();
-
-  if (appId != nsIScriptSecurityManager::NO_APP_ID &&
-      appId != nsIScriptSecurityManager::UNKNOWN_APP_ID) {
-    nsCOMPtr<nsIAppsService> appsService =
-      do_GetService(APPS_SERVICE_CONTRACTID);
-    NS_ASSERTION(appsService, "No AppsService available");
-    nsCOMPtr<nsIURI> redirect;
-    nsresult rv = appsService->GetRedirect(appId, aURI, getter_AddRefs(redirect));
-    if (NS_SUCCEEDED(rv) && redirect) {
-      rv = LoadURI(redirect, aLoadInfo, nsIWebNavigation::LOAD_FLAGS_NONE,
-                   aFirstParty);
-      if (NS_SUCCEEDED(rv)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
 NS_IMETHODIMP
 nsDocShell::ForceRefreshURI(nsIURI* aURI, int32_t aDelay, bool aMetaRefresh)
 {
@@ -7457,10 +7401,6 @@ nsDocShell::OnRedirectStateChange(nsIChannel* aOldChannel,
   aOldChannel->GetURI(getter_AddRefs(oldURI));
   aNewChannel->GetURI(getter_AddRefs(newURI));
   if (!oldURI || !newURI) {
-    return;
-  }
-
-  if (DoAppRedirectIfNeeded(newURI, nullptr, false)) {
     return;
   }
 
@@ -8799,7 +8739,6 @@ nsDocShell::RestoreFromHistory()
   }
 
   nsCOMPtr<nsIDocument> document = do_QueryInterface(domDoc);
-  uint32_t parentSuspendCount = 0;
   if (document) {
     RefPtr<nsDocShell> parent = GetParentDocshell();
     if (parent) {
@@ -8814,10 +8753,6 @@ nsDocShell::RestoreFromHistory()
         if (d->AnimationsPaused()) {
           document->SuppressEventHandling(nsIDocument::eAnimationsOnly,
                                           d->AnimationsPaused());
-        }
-
-        if (nsCOMPtr<nsPIDOMWindowOuter> parentWindow = d->GetWindow()) {
-          parentSuspendCount = parentWindow->TimeoutSuspendCount();
         }
       }
     }
@@ -8955,16 +8890,16 @@ nsDocShell::RestoreFromHistory()
     }
   }
 
+  nsCOMPtr<nsPIDOMWindowInner> privWinInner = privWin->GetCurrentInnerWindow();
+
   // If parent is suspended, increase suspension count.
   // This can't be done as early as event suppression since this
   // depends on docshell tree.
-  if (parentSuspendCount) {
-    privWin->SuspendTimeouts(parentSuspendCount, false);
-  }
+  privWinInner->SyncStateFromParentWindow();
 
   // Now that all of the child docshells have been put into place, we can
   // restart the timers for the window and all of the child frames.
-  privWin->ResumeTimeouts();
+  privWinInner->Resume();
 
   // Restore the refresh URI list.  The refresh timers will be restarted
   // when EndPageLoad() is called.
@@ -9634,7 +9569,7 @@ public:
                                    mReferrer,
                                    mReferrerPolicy,
                                    mTriggeringPrincipal, mPrincipalToInherit,
-                                   mFlags, nullptr, mTypeHint.get(),
+                                   mFlags, EmptyString(), mTypeHint.get(),
                                    NullString(), mPostData, mHeadersData,
                                    mLoadType, mSHEntry, mFirstParty,
                                    mSrcdoc, mSourceDocShell, mBaseURI,
@@ -9724,7 +9659,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
                          nsIPrincipal* aTriggeringPrincipal,
                          nsIPrincipal* aPrincipalToInherit,
                          uint32_t aFlags,
-                         const char16_t* aWindowTarget,
+                         const nsAString& aWindowTarget,
                          const char* aTypeHint,
                          const nsAString& aFileName,
                          nsIInputStream* aPostData,
@@ -9738,6 +9673,20 @@ nsDocShell::InternalLoad(nsIURI* aURI,
                          nsIDocShell** aDocShell,
                          nsIRequest** aRequest)
 {
+  // In most cases both principals (aTriggeringPrincipal and aPrincipalToInherit)
+  // are both null or both non-null. For the exceptional cases let's make sure that:
+  // * if aTriggeringPrincipal is null then either aPrincipalToInherit is null or
+  //   it's a NullPrincipal
+  // * if aPrincipalToInherit is null then either aTriggeringPrincipal is null or
+  //   it's a NullPrincipal or INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL is set.
+  MOZ_ASSERT(aTriggeringPrincipal ||
+             (!aPrincipalToInherit ||
+              aPrincipalToInherit->GetIsNullPrincipal()));
+  MOZ_ASSERT(aPrincipalToInherit ||
+             (!aTriggeringPrincipal ||
+              aTriggeringPrincipal->GetIsNullPrincipal() ||
+              (aFlags & INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL)));
+
   nsresult rv = NS_OK;
   mOriginalUriString.Truncate();
 
@@ -9783,12 +9732,18 @@ nsDocShell::InternalLoad(nsIURI* aURI,
 
   bool isTargetTopLevelDocShell = false;
   nsCOMPtr<nsIDocShell> targetDocShell;
-  if (aWindowTarget && *aWindowTarget) {
+  if (!aWindowTarget.IsEmpty()) {
     // Locate the target DocShell.
     nsCOMPtr<nsIDocShellTreeItem> targetItem;
-    rv = FindItemWithName(aWindowTarget, nullptr, this,
-                          getter_AddRefs(targetItem));
-    NS_ENSURE_SUCCESS(rv, rv);
+    // Only _self, _parent, and _top are supported in noopener case.
+    if (!(aFlags & INTERNAL_LOAD_FLAGS_NO_OPENER) ||
+        aWindowTarget.LowerCaseEqualsLiteral("_self") ||
+        aWindowTarget.LowerCaseEqualsLiteral("_parent") ||
+        aWindowTarget.LowerCaseEqualsLiteral("_top")) {
+      rv = FindItemWithName(aWindowTarget, nullptr, this,
+                            getter_AddRefs(targetItem));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
 
     targetDocShell = do_QueryInterface(targetItem);
     if (targetDocShell) {
@@ -9929,12 +9884,26 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   {
     bool inherits;
     // One more twist: Don't inherit the principal for external loads.
-    if (aLoadType != LOAD_NORMAL_EXTERNAL && !principalToInherit &&
-        (aFlags & INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL) &&
+    if (!principalToInherit && 
         NS_SUCCEEDED(nsContentUtils::URIInheritsSecurityContext(aURI,
                                                                 &inherits)) &&
         inherits) {
-      principalToInherit = GetInheritedPrincipal(true);
+      if (aLoadType != LOAD_NORMAL_EXTERNAL && 
+          (aFlags & INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL)) {
+        principalToInherit = GetInheritedPrincipal(true);
+      }
+
+      // In case we don't have a principalToInherit and the TriggeringPrincipal
+      // either already is a SystemPrincipal or would fall back to become
+      // a SystemPrincipal within the loadInfo then we should explicitly set
+      // the principalToInherit to a freshly created NullPrincipal.
+      if (!principalToInherit && 
+          (nsContentUtils::IsSystemPrincipal(aTriggeringPrincipal) ||
+           (!aTriggeringPrincipal && !aReferrer))) {
+        // We're going to default to inheriting our system triggering principal, 
+        // more or less by accident.  This doesn't seem like a good idea.
+        principalToInherit = nsNullPrincipal::CreateWithInheritedAttributes(this);
+      }
     }
   }
 
@@ -9971,7 +9940,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   // If the load has been targeted to another DocShell, then transfer the
   // load to it...
   //
-  if (aWindowTarget && *aWindowTarget) {
+  if (!aWindowTarget.IsEmpty()) {
     // We've already done our owner-inheriting.  Mask out that bit, so we
     // don't try inheriting an owner from the target window if we came up
     // with a null owner above.
@@ -9996,14 +9965,61 @@ nsDocShell::InternalLoad(nsIURI* aURI,
       nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
       NS_ENSURE_TRUE(win, NS_ERROR_NOT_AVAILABLE);
 
-      nsDependentString name(aWindowTarget);
       nsCOMPtr<nsPIDOMWindowOuter> newWin;
       nsAutoCString spec;
       if (aURI) {
         aURI->GetSpec(spec);
       }
+      // If we are a noopener load, we just hand the whole thing over to our
+      // window.
+      if (aFlags & INTERNAL_LOAD_FLAGS_NO_OPENER) {
+        // Various asserts that we know to hold because NO_OPENER loads can only
+        // happen for links.
+        MOZ_ASSERT(!aLoadReplace);
+        MOZ_ASSERT(aPrincipalToInherit == aTriggeringPrincipal);
+        MOZ_ASSERT(aFlags == INTERNAL_LOAD_FLAGS_NO_OPENER ||
+                   aFlags == (INTERNAL_LOAD_FLAGS_NO_OPENER |
+                              INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER));
+        MOZ_ASSERT(!aPostData);
+        MOZ_ASSERT(!aHeadersData);
+        MOZ_ASSERT(aLoadType == LOAD_LINK);
+        MOZ_ASSERT(!aSHEntry);
+        MOZ_ASSERT(aFirstParty); // Windowwatcher will assume this.
+
+        nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
+        rv = CreateLoadInfo(getter_AddRefs(loadInfo));
+        if (NS_FAILED(rv)) {
+          return rv;
+        }
+
+        // Set up our loadinfo so it will do the load as much like we would have
+        // as possible.
+        loadInfo->SetReferrer(aReferrer);
+        loadInfo->SetReferrerPolicy(aReferrerPolicy);
+        loadInfo->SetSendReferrer(!(aFlags &
+                                    INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER));
+        loadInfo->SetOriginalURI(aOriginalURI);
+        loadInfo->SetLoadReplace(aLoadReplace);
+        loadInfo->SetTriggeringPrincipal(aTriggeringPrincipal);
+        loadInfo->SetInheritPrincipal(
+          aFlags & INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL);
+        // Explicit principal because we do not want any guesses as to what the
+        // principal to inherit is: it should be aTriggeringPrincipal.
+        loadInfo->SetPrincipalIsExplicit(true);
+        loadInfo->SetLoadType(ConvertLoadTypeToDocShellLoadInfo(LOAD_LINK));
+
+        rv = win->Open(NS_ConvertUTF8toUTF16(spec),
+                       aWindowTarget, // window name
+                       EmptyString(), // Features
+                       loadInfo,
+                       true, // aForceNoOpener
+                       getter_AddRefs(newWin));
+        MOZ_ASSERT(!newWin);
+        return rv;
+      }
+
       rv = win->OpenNoNavigate(NS_ConvertUTF8toUTF16(spec),
-                               name,  // window name
+                               aWindowTarget,  // window name
                                EmptyString(), // Features
                                getter_AddRefs(newWin));
 
@@ -10016,11 +10032,6 @@ nsDocShell::InternalLoad(nsIURI* aURI,
         if (!newDoc || newDoc->IsInitialDocument()) {
           isNewWindow = true;
           aFlags |= INTERNAL_LOAD_FLAGS_FIRST_LOAD;
-
-          // set opener object to null for noreferrer
-          if (aFlags & INTERNAL_LOAD_FLAGS_NO_OPENER) {
-            piNewWin->SetOpenerWindow(nullptr, false);
-          }
         }
       }
 
@@ -10041,7 +10052,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
                                         aTriggeringPrincipal,
                                         principalToInherit,
                                         aFlags,
-                                        nullptr,         // No window target
+                                        EmptyString(),   // No window target
                                         aTypeHint,
                                         NullString(),    // No forced download
                                         aPostData,
@@ -10105,7 +10116,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
 
   if (mFiredUnloadEvent) {
     if (IsOKToLoadURI(aURI)) {
-      NS_PRECONDITION(!aWindowTarget || !*aWindowTarget,
+      NS_PRECONDITION(aWindowTarget.IsEmpty(),
                       "Shouldn't have a window target here!");
 
       // If this is a replace load, make whatever load triggered
@@ -10778,35 +10789,6 @@ nsDocShell::DoURILoad(nsIURI* aURI,
   } else {
     MOZ_ASSERT(aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT,
     "DoURILoad thinks this is a document and InternalLoad does not");
-  }
-
-
-  // For mozWidget, display a load error if we navigate to a page which is not
-  // claimed in |widgetPages|.
-  // When we go to display a load error for an invalid mozWidget page, we will
-  // try to load an about:neterror page, which is also an invalid mozWidget
-  // page. To avoid recursion, we skip this check if aURI's scheme is "about".
-
-  // The goal is to prevent leaking sensitive information of an invalid page of
-  // an app, so allowing about:blank would not be conflict to the goal.
-  bool isAbout = false;
-  rv = aURI->SchemeIs("about", &isAbout);
-  if (NS_SUCCEEDED(rv) && !isAbout &&
-      nsIDocShell::GetIsApp()) {
-    nsCOMPtr<Element> frameElement = mScriptGlobal->AsOuter()->GetFrameElementInternal();
-    if (frameElement) {
-      nsCOMPtr<nsIMozBrowserFrame> browserFrame = do_QueryInterface(frameElement);
-      // |GetReallyIsApp| indicates the browser frame is a valid app or widget.
-      // Here we prevent navigating to an app or widget which loses its validity
-      // by loading invalid page or other way.
-      if (browserFrame && !browserFrame->GetReallyIsApp()) {
-        nsCOMPtr<nsIObserverService> serv = services::GetObserverService();
-        if (serv) {
-            serv->NotifyObservers(GetDocument(), "invalid-widget", nullptr);
-        }
-        return NS_ERROR_MALFORMED_URI;
-      }
-    }
   }
 
   // open a channel for the url
@@ -12300,7 +12282,7 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
             pAttrs.InheritFromNecko(nAttrs);
             principalToInherit = nsNullPrincipal::Create(pAttrs);
           }
-        } else if (loadInfo->GetForceInheritPrincipal()) {
+        } else {
           principalToInherit = loadInfo->PrincipalToInherit();
         }
       }
@@ -12537,7 +12519,7 @@ nsDocShell::LoadHistoryEntry(nsISHEntry* aEntry, uint32_t aLoadType)
                     triggeringPrincipal,
                     principalToInherit,
                     flags,
-                    nullptr,            // No window target
+                    EmptyString(),      // No window target
                     contentType.get(),  // Type hint
                     NullString(),       // No forced file download
                     postData,           // Post data stream
@@ -13557,24 +13539,6 @@ nsDocShell::GetNestedFrameId(uint64_t* aId)
 }
 
 NS_IMETHODIMP
-nsDocShell::IsAppOfType(uint32_t aAppType, bool* aIsOfType)
-{
-  RefPtr<nsDocShell> shell = this;
-  while (shell) {
-    uint32_t type;
-    shell->GetAppType(&type);
-    if (type == aAppType) {
-      *aIsOfType = true;
-      return NS_OK;
-    }
-    shell = shell->GetParentDocshell();
-  }
-
-  *aIsOfType = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDocShell::IsTrackingProtectionOn(bool* aIsTrackingProtectionOn)
 {
   if (Preferences::GetBool("privacy.trackingprotection.enabled", false)) {
@@ -13967,10 +13931,15 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
     aContent->GetAttr(kNameSpaceID_None, nsGkAtoms::rel, referrer);
     nsWhitespaceTokenizerTemplate<nsContentUtils::IsHTMLWhitespace> tok(referrer);
     while (tok.hasMoreTokens()) {
-      if (tok.nextToken().LowerCaseEqualsLiteral("noreferrer")) {
+      const nsAString& token = tok.nextToken();
+      if (token.LowerCaseEqualsLiteral("noreferrer")) {
         flags |= INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER |
                  INTERNAL_LOAD_FLAGS_NO_OPENER;
+        // We now have all the flags we could possibly have, so just stop.
         break;
+      }
+      if (token.LowerCaseEqualsLiteral("noopener")) {
+        flags |= INTERNAL_LOAD_FLAGS_NO_OPENER;
       }
     }
   }
@@ -14041,7 +14010,7 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
                                                         // principal
                              aContent->NodePrincipal(),
                              flags,
-                             target.get(),              // Window target
+                             target,                    // Window target
                              NS_LossyConvertUTF16toASCII(typeHint).get(),
                              aFileName,                 // Download as file
                              aPostDataStream,           // Post data stream

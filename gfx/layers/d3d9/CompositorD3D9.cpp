@@ -16,6 +16,7 @@
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "gfxPrefs.h"
 #include "gfxCrashReporterUtils.h"
+#include "gfxUtils.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/widget/WinCompositorWidget.h"
 #include "D3D9SurfaceImage.h"
@@ -71,7 +72,8 @@ CompositorD3D9::GetTextureFactoryIdentifier()
   TextureFactoryIdentifier ident;
   ident.mMaxTextureSize = GetMaxTextureSize();
   ident.mParentBackend = LayersBackend::LAYERS_D3D9;
-  ident.mParentProcessId = XRE_GetProcessType();
+  ident.mParentProcessType = XRE_GetProcessType();
+  ident.mSupportsComponentAlpha = SupportsEffect(EffectTypes::COMPONENT_ALPHA);
   return ident;
 }
 
@@ -414,6 +416,10 @@ CompositorD3D9::DrawQuad(const gfx::Rect &aRect,
         // because of unsupported dimensions (we don't tile YCbCr textures).
         return;
       }
+
+
+      float* yuvToRgb = gfxUtils::Get4x3YuvColorMatrix(ycbcrEffect->mYUVColorSpace);
+      d3d9Device->SetPixelShaderConstantF(CBmYuvColorMatrix, yuvToRgb, 3);
 
       TextureSourceD3D9* sourceY  = source->GetSubSource(Y)->AsSourceD3D9();
       TextureSourceD3D9* sourceCb = source->GetSubSource(Cb)->AsSourceD3D9();
@@ -764,6 +770,17 @@ CompositorD3D9::PrepareViewport(const gfx::IntSize& aSize)
   if (FAILED(hr)) {
     NS_WARNING("Failed to set projection matrix");
   }
+}
+
+bool
+CompositorD3D9::SupportsEffect(EffectTypes aEffect)
+{
+  if (aEffect == EffectTypes::COMPONENT_ALPHA &&
+      !mDeviceManager->HasComponentAlpha()) {
+    return false;
+  }
+
+  return Compositor::SupportsEffect(aEffect);
 }
 
 void

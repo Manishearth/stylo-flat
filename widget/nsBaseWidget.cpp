@@ -352,9 +352,6 @@ nsBaseWidget::OnRenderingDeviceReset()
 
   // Update the texture factory identifier.
   clm->UpdateTextureFactoryIdentifier(identifier);
-  if (ShadowLayerForwarder* lf = clm->AsShadowForwarder()) {
-    lf->IdentifyTextureHost(identifier);
-  }
   ImageBridgeChild::IdentifyCompositorTextureHost(identifier);
   gfx::VRManagerChild::IdentifyTextureHost(identifier);
 }
@@ -1967,9 +1964,8 @@ nsIWidget::SynthesizeNativeTouchTap(LayoutDeviceIntPoint aPoint, bool aLongTap,
   }
 
   if (!aLongTap) {
-    nsresult rv = SynthesizeNativeTouchPoint(pointerId, TOUCH_REMOVE,
-                                             aPoint, 0, 0, nullptr);
-    return rv;
+    return SynthesizeNativeTouchPoint(pointerId, TOUCH_REMOVE,
+                                      aPoint, 0, 0, nullptr);
   }
 
   // initiate a long tap
@@ -3051,6 +3047,8 @@ case _value: eventName.AssignLiteral(_name) ; break
     _ASSIGN_eventName(eDragOver,"eDragOver");
     _ASSIGN_eventName(eEditorInput,"eEditorInput");
     _ASSIGN_eventName(eFocus,"eFocus");
+    _ASSIGN_eventName(eFocusIn,"eFocusIn");
+    _ASSIGN_eventName(eFocusOut,"eFocusOut");
     _ASSIGN_eventName(eFormSelect,"eFormSelect");
     _ASSIGN_eventName(eFormChange,"eFormChange");
     _ASSIGN_eventName(eFormReset,"eFormReset");

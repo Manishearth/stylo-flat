@@ -18,6 +18,8 @@
 
 #include "asmjs/WasmTypes.h"
 
+#include "mozilla/MathAlgorithms.h"
+
 #include "fdlibm.h"
 
 #include "jslibmath.h"
@@ -37,6 +39,7 @@ using namespace js::jit;
 using namespace js::wasm;
 
 using mozilla::IsNaN;
+using mozilla::IsPowerOfTwo;
 
 void
 Val::writePayload(uint8_t* dst) const
@@ -59,8 +62,6 @@ Val::writePayload(uint8_t* dst) const
       case ValType::B32x4:
         memcpy(dst, &u, jit::Simd128DataSize);
         return;
-      case ValType::Limit:
-        MOZ_CRASH("Bad value type");
     }
 }
 
@@ -98,7 +99,7 @@ WasmHandleExecutionInterrupt()
 }
 
 static void
-HandleTrap(int32_t trapIndex)
+WasmReportTrap(int32_t trapIndex)
 {
     JSContext* cx = JSRuntime::innermostWasmActivation()->cx();
 
@@ -129,16 +130,30 @@ HandleTrap(int32_t trapIndex)
         errorNumber = JSMSG_SIMD_FAILED_CONVERSION;
         break;
       case Trap::OutOfBounds:
-        errorNumber = JSMSG_BAD_INDEX;
+        errorNumber = JSMSG_WASM_OUT_OF_BOUNDS;
         break;
-      case Trap::UnalignedAccess:
-        errorNumber = JSMSG_WASM_UNALIGNED_ACCESS;
+      case Trap::StackOverflow:
+        errorNumber = JSMSG_OVER_RECURSED;
         break;
       default:
         MOZ_CRASH("unexpected trap");
     }
 
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, errorNumber);
+}
+
+static void
+WasmReportOutOfBounds()
+{
+    JSContext* cx = JSRuntime::innermostWasmActivation()->cx();
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_OUT_OF_BOUNDS);
+}
+
+static void
+WasmReportUnalignedAccess()
+{
+    JSContext* cx = JSRuntime::innermostWasmActivation()->cx();
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_UNALIGNED_ACCESS);
 }
 
 static int32_t
@@ -262,8 +277,12 @@ wasm::AddressOf(SymbolicAddress imm, ExclusiveContext* cx)
         return FuncCast(WasmReportOverRecursed, Args_General0);
       case SymbolicAddress::HandleExecutionInterrupt:
         return FuncCast(WasmHandleExecutionInterrupt, Args_General0);
-      case SymbolicAddress::HandleTrap:
-        return FuncCast(HandleTrap, Args_General1);
+      case SymbolicAddress::ReportTrap:
+        return FuncCast(WasmReportTrap, Args_General1);
+      case SymbolicAddress::ReportOutOfBounds:
+        return FuncCast(WasmReportOutOfBounds, Args_General0);
+      case SymbolicAddress::ReportUnalignedAccess:
+        return FuncCast(WasmReportUnalignedAccess, Args_General0);
       case SymbolicAddress::CallImport_Void:
         return FuncCast(Instance::callImport_void, Args_General4);
       case SymbolicAddress::CallImport_I32:
@@ -593,6 +612,10 @@ Assumptions::serializedSize() const
 uint8_t*
 Assumptions::serialize(uint8_t* cursor) const
 {
+    // The format of serialized Assumptions must never change in a way that
+    // would cause old cache files written with by an old build-id to match the
+    // assumptions of a different build-id.
+
     cursor = WriteScalar<uint32_t>(cursor, cpuId);
     cursor = SerializePodVector(cursor, buildId);
     return cursor;

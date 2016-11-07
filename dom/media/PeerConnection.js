@@ -190,19 +190,6 @@ GlobalPCList.prototype = {
       } else if (data == "online") {
         this._networkdown = false;
       }
-    } else if (topic == "network:app-offline-status-changed") {
-      // App changed offline status. The subject contains the appId for which
-      // we need to check the status
-      let appId = subject.QueryInterface(Ci.nsIAppOfflineInfo).appId;
-      let ios = Cc['@mozilla.org/network/io-service;1'].getService(Ci.nsIIOService);
-      for (let winId in this._list) {
-        if (appId != this._list[winId]._appId) {
-          continue;
-        }
-        if (ios.isAppOffline(appId)) {
-          cleanupWinId(this._list, winId);
-        }
-      }
     } else if (topic == "gmp-plugin-crash") {
       if (subject instanceof Ci.nsIWritablePropertyBag2) {
         let pluginID = subject.getPropertyAsUint32("pluginID");
@@ -384,20 +371,10 @@ RTCPeerConnection.prototype = {
       this._mustValidateRTCConfiguration(rtcConfig,
         "RTCPeerConnection constructor passed invalid RTCConfiguration");
     }
-    // Save the appId
     var principal = Cu.getWebIDLCallerPrincipal();
-    this._appId = principal.appId;
     this._isChrome = Services.scriptSecurityManager.isSystemPrincipal(principal);
 
-    // Get the offline status for this appId
-    let appOffline = false;
-    if (this._appId != Ci.nsIScriptSecurityManager.NO_APP_ID &&
-        this._appId != Ci.nsIScriptSecurityManager.UNKNOWN_APP_ID) {
-      let ios = Cc['@mozilla.org/network/io-service;1'].getService(Ci.nsIIOService);
-      appOffline = ios.isAppOffline(this._appId);
-    }
-
-    if (_globalPCList._networkdown || appOffline) {
+    if (_globalPCList._networkdown) {
       throw new this._win.DOMException(
           "Can't create RTCPeerConnections when the network is down",
           "InvalidStateError");
@@ -582,11 +559,11 @@ RTCPeerConnection.prototype = {
       server.urls.forEach(urlStr => {
         let url = nicerNewURI(urlStr);
         if (url.scheme in { turn:1, turns:1 }) {
-          if (!server.username) {
+          if (server.username == undefined) {
             throw new this._win.DOMException(msg + " - missing username: " + urlStr,
                                              "InvalidAccessError");
           }
-          if (!server.credential) {
+          if (server.credential == undefined) {
             throw new this._win.DOMException(msg + " - missing credential: " + urlStr,
                                              "InvalidAccessError");
           }
@@ -1597,8 +1574,6 @@ RTCPeerConnectionStatic.prototype = {
 
 function RTCDTMFSender(sender) {
   this._sender = sender;
-  this.duration = 100;
-  this.interToneGap = 70;
 }
 RTCDTMFSender.prototype = {
   classDescription: "RTCDTMFSender",
@@ -1626,10 +1601,8 @@ RTCDTMFSender.prototype = {
                                                    "InvalidStateError");
     }
 
-    this.duration = Math.max(40, Math.min(duration, 6000));
-
+    duration = Math.max(40, Math.min(duration, 6000));
     if (interToneGap < 30) interToneGap = 30;
-    this.interToneGap = interToneGap;
 
     tones = tones.toUpperCase();
 

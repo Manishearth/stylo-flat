@@ -149,6 +149,7 @@
 #include "mozilla/Preferences.h"
 #include "nsComputedDOMStyle.h"
 #include "nsDOMStringMap.h"
+#include "DOMIntersectionObserver.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -2014,14 +2015,14 @@ Element::IsInteractiveHTMLContent(bool aIgnoreTabindex) const
   return false;
 }
 
-css::Declaration*
+DeclarationBlock*
 Element::GetInlineStyleDeclaration()
 {
   return nullptr;
 }
 
 nsresult
-Element::SetInlineStyleDeclaration(css::Declaration* aDeclaration,
+Element::SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
                                    const nsAString* aSerialized,
                                    bool aNotify)
 {
@@ -2813,9 +2814,9 @@ Element::DescribeAttribute(uint32_t index, nsAString& aOutDescription) const
   aOutDescription.AppendLiteral("=\"");
   nsAutoString value;
   mAttrsAndChildren.AttrAt(index)->ToString(value);
-  for (int i = value.Length(); i >= 0; --i) {
-    if (value[i] == char16_t('"'))
-      value.Insert(char16_t('\\'), uint32_t(i));
+  for (uint32_t i = value.Length(); i > 0; --i) {
+    if (value[i - 1] == char16_t('"'))
+      value.Insert(char16_t('\\'), i - 1);
   }
   aOutDescription.Append(value);
   aOutDescription.Append('"');
@@ -3723,7 +3724,8 @@ Element::InsertAdjacent(const nsAString& aWhere,
     }
     parent->InsertBefore(*aNode, this, aError);
   } else if (aWhere.LowerCaseEqualsLiteral("afterbegin")) {
-    static_cast<nsINode*>(this)->InsertBefore(*aNode, GetFirstChild(), aError);
+    nsCOMPtr<nsINode> refNode = GetFirstChild();
+    static_cast<nsINode*>(this)->InsertBefore(*aNode, refNode, aError);
   } else if (aWhere.LowerCaseEqualsLiteral("beforeend")) {
     static_cast<nsINode*>(this)->AppendChild(*aNode, aError);
   } else if (aWhere.LowerCaseEqualsLiteral("afterend")) {
@@ -3731,7 +3733,8 @@ Element::InsertAdjacent(const nsAString& aWhere,
     if (!parent) {
       return nullptr;
     }
-    parent->InsertBefore(*aNode, GetNextSibling(), aError);
+    nsCOMPtr<nsINode> refNode = GetNextSibling();
+    parent->InsertBefore(*aNode, refNode, aError);
   } else {
     aError.Throw(NS_ERROR_DOM_SYNTAX_ERR);
     return nullptr;
@@ -3884,3 +3887,44 @@ Element::ClearDataset()
   slots->mDataset = nullptr;
 }
 
+nsTArray<Element::nsDOMSlots::IntersectionObserverRegistration>*
+Element::RegisteredIntersectionObservers()
+{
+  nsDOMSlots* slots = DOMSlots();
+  return &slots->mRegisteredIntersectionObservers;
+}
+
+void
+Element::RegisterIntersectionObserver(DOMIntersectionObserver* aObserver)
+{
+  RegisteredIntersectionObservers()->AppendElement(
+    nsDOMSlots::IntersectionObserverRegistration { aObserver, -1 });
+}
+
+void
+Element::UnregisterIntersectionObserver(DOMIntersectionObserver* aObserver)
+{
+  nsTArray<nsDOMSlots::IntersectionObserverRegistration>* observers =
+    RegisteredIntersectionObservers();
+  for (uint32_t i = 0; i < observers->Length(); ++i) {
+    nsDOMSlots::IntersectionObserverRegistration reg = observers->ElementAt(i);
+    if (reg.observer == aObserver) {
+      observers->RemoveElementAt(i);
+      break;
+    }
+  }
+}
+
+bool
+Element::UpdateIntersectionObservation(DOMIntersectionObserver* aObserver, int32_t aThreshold)
+{
+  nsTArray<nsDOMSlots::IntersectionObserverRegistration>* observers =
+    RegisteredIntersectionObservers();
+  for (auto& reg : *observers) {
+    if (reg.observer == aObserver && reg.previousThreshold != aThreshold) {
+      reg.previousThreshold = aThreshold;
+      return true;
+    }
+  }
+  return false;
+}

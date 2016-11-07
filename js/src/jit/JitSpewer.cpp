@@ -23,9 +23,9 @@
 #include "jit/MIRGenerator.h"
 
 #include "threading/LockGuard.h"
-#include "threading/Mutex.h"
 
 #include "vm/HelperThreads.h"
+#include "vm/MutexIDs.h"
 
 #ifndef JIT_SPEW_DIR
 # if defined(_WIN32)
@@ -54,7 +54,8 @@ class IonSpewer
 
   public:
     IonSpewer()
-      : firstFunction_(false),
+      : outputLock_(mutexid::IonSpewer),
+        firstFunction_(false),
         asyncLogging_(false),
         inited_(false)
     { }
@@ -415,6 +416,8 @@ jit::CheckLogging()
             "  alias-sum  Alias analysis: shows summaries for every block\n"
             "  gvn        Global Value Numbering\n"
             "  licm       Loop invariant code motion\n"
+            "  flac       Fold linear arithmetic constants\n"
+            "  eaa        Effective address analysis\n"
             "  sincos     Replace sin/cos by sincos\n"
             "  sink       Sink transformation\n"
             "  regalloc   Register allocation\n"
@@ -471,6 +474,10 @@ jit::CheckLogging()
         EnableChannel(JitSpew_Unrolling);
     if (ContainsFlag(env, "licm"))
         EnableChannel(JitSpew_LICM);
+    if (ContainsFlag(env, "flac"))
+        EnableChannel(JitSpew_FLAC);
+    if (ContainsFlag(env, "eaa"))
+        EnableChannel(JitSpew_EAA);
     if (ContainsFlag(env, "sincos"))
         EnableChannel(JitSpew_Sincos);
     if (ContainsFlag(env, "sink"))

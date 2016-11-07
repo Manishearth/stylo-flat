@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use app_units::Au;
+use cssparser::Parser;
 use devtools_traits::{ScriptToDevtoolsControlMsg, TimelineMarker, TimelineMarkerType};
 use dom::bindings::callback::ExceptionHandling;
 use dom::bindings::cell::DOMRefCell;
@@ -35,6 +36,7 @@ use dom::globalscope::GlobalScope;
 use dom::history::History;
 use dom::htmliframeelement::build_mozbrowser_custom_event;
 use dom::location::Location;
+use dom::mediaquerylist::{MediaQueryList, WeakMediaQueryListVec};
 use dom::messageevent::MessageEvent;
 use dom::navigator::Navigator;
 use dom::node::{Node, from_untrusted_node_address, window_from_node};
@@ -44,13 +46,12 @@ use dom::screen::Screen;
 use dom::storage::Storage;
 use euclid::{Point2D, Rect, Size2D};
 use fetch;
-use gfx_traits::LayerId;
 use ipc_channel::ipc::{self, IpcSender};
 use js::jsapi::{HandleObject, HandleValue, JSAutoCompartment, JSContext};
 use js::jsapi::{JS_GC, JS_GetRuntime, SetWindowProxy};
 use js::jsval::UndefinedValue;
 use js::rust::Runtime;
-use msg::constellation_msg::{FrameType, LoadData, PipelineId, ReferrerPolicy, WindowSizeType};
+use msg::constellation_msg::{FrameType, PipelineId, ReferrerPolicy};
 use net_traits::ResourceThreads;
 use net_traits::bluetooth_thread::BluetoothMethodMsg;
 use net_traits::image_cache_thread::{ImageCacheChan, ImageCacheThread};
@@ -69,9 +70,9 @@ use script_layout_interface::rpc::{MarginStyleResponse, ResolvedStyleResponse};
 use script_runtime::{CommonScriptMsg, ScriptChan, ScriptPort, ScriptThreadEventCategory};
 use script_thread::{MainThreadScriptChan, MainThreadScriptMsg, Runnable, RunnableWrapper};
 use script_thread::SendableMainThreadScriptChan;
-use script_traits::{ConstellationControlMsg, MozBrowserEvent, UntrustedNodeAddress};
+use script_traits::{ConstellationControlMsg, LoadData, MozBrowserEvent, UntrustedNodeAddress};
 use script_traits::{DocumentState, TimerEvent, TimerEventId};
-use script_traits::{ScriptMsg as ConstellationMsg, TimerEventRequest, WindowSizeData};
+use script_traits::{ScriptMsg as ConstellationMsg, TimerEventRequest, WindowSizeData, WindowSizeType};
 use script_traits::webdriver_msg::{WebDriverJSError, WebDriverJSResult};
 use std::ascii::AsciiExt;
 use std::borrow::ToOwned;
@@ -87,6 +88,7 @@ use std::sync::mpsc::TryRecvError::{Disconnected, Empty};
 use string_cache::Atom;
 use style::context::ReflowGoal;
 use style::error_reporting::ParseErrorReporter;
+use style::media_queries;
 use style::properties::longhands::overflow_x;
 use style::selector_impl::PseudoElement;
 use style::str::HTML_SPACE_CHARACTERS;
@@ -172,7 +174,7 @@ pub struct Window {
     /// no devtools server
     devtools_markers: DOMRefCell<HashSet<TimelineMarkerType>>,
     #[ignore_heap_size_of = "channels are hard"]
-    devtools_marker_sender: DOMRefCell<Option<IpcSender<TimelineMarker>>>,
+    devtools_marker_sender: DOMRefCell<Option<IpcSender<Option<TimelineMarker>>>>,
 
     /// Pending resize event, if any.
     resize_event: Cell<Option<(WindowSizeData, WindowSizeType)>>,
@@ -234,6 +236,9 @@ pub struct Window {
 
     /// A list of scroll offsets for each scrollable element.
     scroll_offsets: DOMRefCell<HashMap<UntrustedNodeAddress, Point2D<f32>>>,
+
+    /// All the MediaQueryLists we need to update
+    media_query_lists: WeakMediaQueryListVec,
 }
 
 impl Window {
@@ -309,6 +314,10 @@ impl Window {
     /// This is called when layout gives us new ones and WebRender is in use.
     pub fn set_scroll_offsets(&self, offsets: HashMap<UntrustedNodeAddress, Point2D<f32>>) {
         *self.scroll_offsets.borrow_mut() = offsets
+    }
+
+    pub fn current_viewport(&self) -> Rect<Au> {
+        self.current_viewport.clone().get()
     }
 }
 
@@ -857,6 +866,16 @@ impl WindowMethods for Window {
         }
     }
 
+    // https://drafts.csswg.org/cssom-view/#dom-window-matchmedia
+    fn MatchMedia(&self, query: DOMString) -> Root<MediaQueryList> {
+        let mut parser = Parser::new(&query);
+        let media_query_list = media_queries::parse_media_query_list(&mut parser);
+        let document = self.Document();
+        let mql = MediaQueryList::new(&document, media_query_list);
+        self.media_query_lists.push(&*mql);
+        mql
+    }
+
     #[allow(unrooted_must_root)]
     // https://fetch.spec.whatwg.org/#fetch-method
     fn Fetch(&self, input: RequestOrUSVString, init: &RequestInit) -> Rc<Promise> {
@@ -935,11 +954,11 @@ impl Window {
         //let document = self.Document();
         // Step 12
         self.perform_a_scroll(x.to_f32().unwrap_or(0.0f32), y.to_f32().unwrap_or(0.0f32),
-                              LayerId::null(), behavior, None);
+                              behavior, None);
     }
 
     /// https://drafts.csswg.org/cssom-view/#perform-a-scroll
-    pub fn perform_a_scroll(&self, x: f32, y: f32, layer_id: LayerId,
+    pub fn perform_a_scroll(&self, x: f32, y: f32,
                             behavior: ScrollBehavior, element: Option<&Element>) {
         //TODO Step 1
         let point = Point2D::new(x, y);
@@ -959,7 +978,7 @@ impl Window {
 
         let global_scope = self.upcast::<GlobalScope>();
         let message = ConstellationMsg::ScrollFragmentPoint(
-            global_scope.pipeline_id(), layer_id, point, smooth);
+            global_scope.pipeline_id(), point, smooth);
         global_scope.constellation_chan().send(message).unwrap();
     }
 
@@ -1124,7 +1143,9 @@ impl Window {
         // When all these conditions are met, notify the constellation
         // that this pipeline is ready to write the image (from the script thread
         // perspective at least).
-        if (opts::get().output_file.is_some() || opts::get().exit_after_load) && for_display {
+        if (opts::get().output_file.is_some() ||
+            opts::get().exit_after_load ||
+            opts::get().webdriver_port.is_some()) && for_display {
             let document = self.Document();
 
             // Checks if the html element has reftest-wait attribute present.
@@ -1220,58 +1241,28 @@ impl Window {
     }
 
     pub fn scroll_offset_query(&self, node: &Node) -> Point2D<f32> {
-        // WebRender always keeps the scroll offsets up to date and stored here in the window. So,
-        // if WR is in use, all we need to do is to check our list of scroll offsets and return the
-        // result.
-        if opts::get().use_webrender {
-            let mut node = Root::from_ref(node);
-            loop {
-                if let Some(scroll_offset) = self.scroll_offsets
-                                                 .borrow()
-                                                 .get(&node.to_untrusted_node_address()) {
-                    return *scroll_offset
-                }
-                node = match node.GetParentNode() {
-                    Some(node) => node,
-                    None => break,
-                }
+        let mut node = Root::from_ref(node);
+        loop {
+            if let Some(scroll_offset) = self.scroll_offsets
+                                             .borrow()
+                                             .get(&node.to_untrusted_node_address()) {
+                return *scroll_offset
             }
-            let offset = self.current_viewport.get().origin;
-            return Point2D::new(offset.x.to_f32_px(), offset.y.to_f32_px())
+            node = match node.GetParentNode() {
+                Some(node) => node,
+                None => break,
+            }
         }
-
-        let node = node.to_trusted_node_address();
-        if !self.reflow(ReflowGoal::ForScriptQuery,
-                        ReflowQueryType::NodeLayerIdQuery(node),
-                        ReflowReason::Query) {
-            return Point2D::zero();
-        }
-
-        let layer_id = self.layout_rpc.node_layer_id().layer_id;
-
-        let (send, recv) = ipc::channel::<Point2D<f32>>().unwrap();
-        let global_scope = self.upcast::<GlobalScope>();
-        global_scope
-            .constellation_chan()
-            .send(ConstellationMsg::GetScrollOffset(global_scope.pipeline_id(), layer_id, send))
-            .unwrap();
-        recv.recv().unwrap_or(Point2D::zero())
+        let offset = self.current_viewport.get().origin;
+        Point2D::new(offset.x.to_f32_px(), offset.y.to_f32_px())
     }
 
     // https://drafts.csswg.org/cssom-view/#dom-element-scroll
-    pub fn scroll_node(&self, node: TrustedNodeAddress,
+    pub fn scroll_node(&self, _node: TrustedNodeAddress,
                        x_: f64, y_: f64, behavior: ScrollBehavior) {
-        if !self.reflow(ReflowGoal::ForScriptQuery,
-                        ReflowQueryType::NodeLayerIdQuery(node),
-                        ReflowReason::Query) {
-            return;
-        }
-
-        let layer_id = self.layout_rpc.node_layer_id().layer_id;
-
         // Step 12
         self.perform_a_scroll(x_.to_f32().unwrap_or(0.0f32), y_.to_f32().unwrap_or(0.0f32),
-                              layer_id, behavior, None);
+                              behavior, None);
     }
 
     pub fn resolved_style_query(&self,
@@ -1435,12 +1426,12 @@ impl Window {
     pub fn emit_timeline_marker(&self, marker: TimelineMarker) {
         let sender = self.devtools_marker_sender.borrow();
         let sender = sender.as_ref().expect("There is no marker sender");
-        sender.send(marker).unwrap();
+        sender.send(Some(marker)).unwrap();
     }
 
     pub fn set_devtools_timeline_markers(&self,
                                          markers: Vec<TimelineMarkerType>,
-                                         reply: IpcSender<TimelineMarker>) {
+                                         reply: IpcSender<Option<TimelineMarker>>) {
         *self.devtools_marker_sender.borrow_mut() = Some(reply);
         self.devtools_markers.borrow_mut().extend(markers.into_iter());
     }
@@ -1505,6 +1496,10 @@ impl Window {
         assert!(PREFS.is_mozbrowser_enabled());
         let custom_event = build_mozbrowser_custom_event(&self, event);
         custom_event.upcast::<Event>().fire(self.upcast());
+    }
+
+    pub fn evaluate_media_queries_and_report_changes(&self) {
+        self.media_query_lists.evaluate_and_report_changes();
     }
 }
 
@@ -1592,6 +1587,7 @@ impl Window {
             ignore_further_async_events: Arc::new(AtomicBool::new(false)),
             error_reporter: error_reporter,
             scroll_offsets: DOMRefCell::new(HashMap::new()),
+            media_query_lists: WeakMediaQueryListVec::new(),
         };
 
         WindowBinding::Wrap(runtime.cx(), win)
@@ -1629,7 +1625,6 @@ fn debug_reflow_events(id: PipelineId, goal: &ReflowGoal, query_type: &ReflowQue
         ReflowQueryType::ContentBoxesQuery(_n) => "\tContentBoxesQuery",
         ReflowQueryType::HitTestQuery(..) => "\tHitTestQuery",
         ReflowQueryType::NodeGeometryQuery(_n) => "\tNodeGeometryQuery",
-        ReflowQueryType::NodeLayerIdQuery(_n) => "\tNodeLayerIdQuery",
         ReflowQueryType::NodeOverflowQuery(_n) => "\tNodeOverFlowQuery",
         ReflowQueryType::NodeScrollGeometryQuery(_n) => "\tNodeScrollGeometryQuery",
         ReflowQueryType::ResolvedStyleQuery(_, _, _) => "\tResolvedStyleQuery",

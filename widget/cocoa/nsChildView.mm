@@ -18,6 +18,7 @@
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
 
+#include "nsArrayUtils.h"
 #include "nsObjCExceptions.h"
 #include "nsCOMPtr.h"
 #include "nsToolkit.h"
@@ -131,7 +132,7 @@ extern NSMenu* sApplicationMenu; // Application menu shared by all menubars
 
 static bool gChildViewMethodsSwizzled = false;
 
-extern nsISupportsArray *gDraggedTransferables;
+extern nsIArray *gDraggedTransferables;
 
 ChildView* ChildViewMouseTracker::sLastMouseEventView = nil;
 NSEvent* ChildViewMouseTracker::sLastMouseMoveEvent = nil;
@@ -2543,10 +2544,15 @@ nsChildView::UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries)
     GatherThemeGeometryRegion(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeHighlightedMenuItem);
   LayoutDeviceIntRegion sourceListRegion =
     GatherThemeGeometryRegion(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeSourceList);
+  LayoutDeviceIntRegion sourceListSelectionRegion =
+    GatherThemeGeometryRegion(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeSourceListSelection);
+  LayoutDeviceIntRegion activeSourceListSelectionRegion =
+    GatherThemeGeometryRegion(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeActiveSourceListSelection);
 
   MakeRegionsNonOverlapping(sheetRegion, vibrantLightRegion, vibrantDarkRegion,
                             menuRegion, tooltipRegion, highlightedMenuItemRegion,
-                            sourceListRegion);
+                            sourceListRegion, sourceListSelectionRegion,
+                            activeSourceListSelectionRegion);
 
   auto& vm = EnsureVibrancyManager();
   vm.UpdateVibrantRegion(VibrancyType::LIGHT, vibrantLightRegion);
@@ -2555,6 +2561,8 @@ nsChildView::UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries)
   vm.UpdateVibrantRegion(VibrancyType::HIGHLIGHTED_MENUITEM, highlightedMenuItemRegion);
   vm.UpdateVibrantRegion(VibrancyType::SHEET, sheetRegion);
   vm.UpdateVibrantRegion(VibrancyType::SOURCE_LIST, sourceListRegion);
+  vm.UpdateVibrantRegion(VibrancyType::SOURCE_LIST_SELECTION, sourceListSelectionRegion);
+  vm.UpdateVibrantRegion(VibrancyType::ACTIVE_SOURCE_LIST_SELECTION, activeSourceListSelectionRegion);
   vm.UpdateVibrantRegion(VibrancyType::DARK, vibrantDarkRegion);
 }
 
@@ -2584,6 +2592,10 @@ ThemeGeometryTypeToVibrancyType(nsITheme::ThemeGeometryType aThemeGeometryType)
       return VibrancyType::SHEET;
     case nsNativeThemeCocoa::eThemeGeometryTypeSourceList:
       return VibrancyType::SOURCE_LIST;
+    case nsNativeThemeCocoa::eThemeGeometryTypeSourceListSelection:
+      return VibrancyType::SOURCE_LIST_SELECTION;
+    case nsNativeThemeCocoa::eThemeGeometryTypeActiveSourceListSelection:
+      return VibrancyType::ACTIVE_SOURCE_LIST_SELECTION;
     default:
       MOZ_CRASH();
   }
@@ -4730,12 +4742,6 @@ NSEvent* gLastDragMouseDownEvent = nil;
   mGeckoChild->DispatchInputEvent(&geckoEvent);
 }
 
-static int32_t RoundUp(double aDouble)
-{
-  return aDouble < 0 ? static_cast<int32_t>(floor(aDouble)) :
-                       static_cast<int32_t>(ceil(aDouble));
-}
-
 - (void)sendWheelStartOrStop:(EventMessage)msg forEvent:(NSEvent *)theEvent
 {
   WidgetWheelEvent wheelEvent(true, msg, mGeckoChild);
@@ -4787,6 +4793,49 @@ PanGestureTypeForEvent(NSEvent* aEvent)
   }
 }
 
+static int32_t RoundUp(double aDouble)
+{
+  return aDouble < 0 ? static_cast<int32_t>(floor(aDouble)) :
+                       static_cast<int32_t>(ceil(aDouble));
+}
+
+static int32_t
+TakeLargestInt(gfx::Float* aFloat)
+{
+  int32_t result(*aFloat); // truncate towards zero
+  *aFloat -= result;
+  return result;
+}
+
+static gfx::IntPoint
+AccumulateIntegerDelta(NSEvent* aEvent)
+{
+  static gfx::Point sAccumulator(0.0f, 0.0f);
+  if (nsCocoaUtils::EventPhase(aEvent) == NSEventPhaseBegan) {
+    sAccumulator = gfx::Point(0.0f, 0.0f);
+  }
+  sAccumulator.x += [aEvent deltaX];
+  sAccumulator.y += [aEvent deltaY];
+  return gfx::IntPoint(TakeLargestInt(&sAccumulator.x),
+                       TakeLargestInt(&sAccumulator.y));
+}
+
+static gfx::IntPoint
+GetIntegerDeltaForEvent(NSEvent* aEvent)
+{
+  if (nsCocoaFeatures::OnSierraOrLater()) {
+    return AccumulateIntegerDelta(aEvent);
+  }
+
+  // Pre-10.12, deltaX/deltaY had the accumulation behavior that we want, and
+  // it worked more reliably than doing it on our own, so use it on pre-10.12
+  // versions. For example, with a traditional USB mouse, the first wheel
+  // "tick" would always senda line scroll of at least one line, but with our
+  // own accumulation you sometimes need to do multiple wheel ticks before one
+  // line has been accumulated.
+  return gfx::IntPoint(RoundUp([aEvent deltaX]), RoundUp([aEvent deltaY]));
+}
+
 - (void)scrollWheel:(NSEvent*)theEvent
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
@@ -4834,8 +4883,7 @@ PanGestureTypeForEvent(NSEvent* aEvent)
     Preferences::GetBool("mousewheel.enable_pixel_scrolling", true);
   bool hasPhaseInformation = nsCocoaUtils::EventHasPhaseInformation(theEvent);
 
-  int32_t lineOrPageDeltaX = RoundUp(-[theEvent deltaX]);
-  int32_t lineOrPageDeltaY = RoundUp(-[theEvent deltaY]);
+  gfx::IntPoint lineOrPageDelta = -GetIntegerDeltaForEvent(theEvent);
 
   Modifiers modifiers = nsCocoaUtils::ModifiersForEvent(theEvent);
 
@@ -4855,8 +4903,8 @@ PanGestureTypeForEvent(NSEvent* aEvent)
     PanGestureInput panEvent(PanGestureTypeForEvent(theEvent),
                              eventIntervalTime, eventTimeStamp,
                              position, preciseDelta, modifiers);
-    panEvent.mLineOrPageDeltaX = lineOrPageDeltaX;
-    panEvent.mLineOrPageDeltaY = lineOrPageDeltaY;
+    panEvent.mLineOrPageDeltaX = lineOrPageDelta.x;
+    panEvent.mLineOrPageDeltaY = lineOrPageDelta.y;
 
     if (panEvent.mType == PanGestureInput::PANGESTURE_END) {
       // Check if there's a momentum start event in the event queue, so that we
@@ -4884,8 +4932,8 @@ PanGestureTypeForEvent(NSEvent* aEvent)
                                 preciseDelta.x,
                                 preciseDelta.y,
                                 false);
-    wheelEvent.mLineOrPageDeltaX = lineOrPageDeltaX;
-    wheelEvent.mLineOrPageDeltaY = lineOrPageDeltaY;
+    wheelEvent.mLineOrPageDeltaX = lineOrPageDelta.x;
+    wheelEvent.mLineOrPageDeltaY = lineOrPageDelta.y;
     wheelEvent.mIsMomentum = nsCocoaUtils::IsMomentumScrollEvent(theEvent);
     mGeckoChild->DispatchAPZWheelInputEvent(wheelEvent, false);
   } else {
@@ -4897,11 +4945,11 @@ PanGestureTypeForEvent(NSEvent* aEvent)
                                 scrollMode,
                                 ScrollWheelInput::SCROLLDELTA_LINE,
                                 position,
-                                lineOrPageDeltaX,
-                                lineOrPageDeltaY,
+                                lineOrPageDelta.x,
+                                lineOrPageDelta.y,
                                 false);
-    wheelEvent.mLineOrPageDeltaX = lineOrPageDeltaX;
-    wheelEvent.mLineOrPageDeltaY = lineOrPageDeltaY;
+    wheelEvent.mLineOrPageDeltaX = lineOrPageDelta.x;
+    wheelEvent.mLineOrPageDeltaY = lineOrPageDelta.y;
     mGeckoChild->DispatchAPZWheelInputEvent(wheelEvent, false);
   }
 
@@ -5827,14 +5875,12 @@ PanGestureTypeForEvent(NSEvent* aEvent)
     return nil;
 
   uint32_t transferableCount;
-  rv = gDraggedTransferables->Count(&transferableCount);
+  rv = gDraggedTransferables->GetLength(&transferableCount);
   if (NS_FAILED(rv))
     return nil;
 
   for (uint32_t i = 0; i < transferableCount; i++) {
-    nsCOMPtr<nsISupports> genericItem;
-    gDraggedTransferables->GetElementAt(i, getter_AddRefs(genericItem));
-    nsCOMPtr<nsITransferable> item(do_QueryInterface(genericItem));
+    nsCOMPtr<nsITransferable> item = do_QueryElementAt(gDraggedTransferables, i);
     if (!item) {
       NS_ERROR("no transferable");
       return nil;

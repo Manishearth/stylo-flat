@@ -20,8 +20,8 @@
 #include "mozilla/EffectCompositor.h"
 #include "mozilla/KeyframeEffectParams.h"
 #include "mozilla/LayerAnimationInfo.h" // LayerAnimations::kRecords
-#include "mozilla/ServoBindingHelpers.h" // ServoDeclarationBlock and
-                                         // associated RefPtrTraits
+#include "mozilla/ServoBindingTypes.h" // RawServoDeclarationBlock and
+                                       // associated RefPtrTraits
 #include "mozilla/StyleAnimationValue.h"
 #include "mozilla/dom/AnimationEffectReadOnly.h"
 #include "mozilla/dom/Element.h"
@@ -67,16 +67,9 @@ struct PropertyValuePair
   // The specified value when using the Servo backend. However, even when
   // using the Servo backend, we still fill in |mValue| in the case where we
   // fail to parse the value since we use it to store the original string.
-  RefPtr<ServoDeclarationBlock> mServoDeclarationBlock;
+  RefPtr<RawServoDeclarationBlock> mServoDeclarationBlock;
 
-  bool operator==(const PropertyValuePair& aOther) const {
-    return mProperty == aOther.mProperty &&
-           mValue == aOther.mValue &&
-           !mServoDeclarationBlock == !aOther.mServoDeclarationBlock &&
-           (!mServoDeclarationBlock ||
-            Servo_DeclarationBlock_Equals(mServoDeclarationBlock,
-                                          aOther.mServoDeclarationBlock));
-  }
+  bool operator==(const PropertyValuePair&) const;
 };
 
 /**
@@ -235,12 +228,25 @@ public:
                     ErrorResult& aRv);
   void SetKeyframes(nsTArray<Keyframe>&& aKeyframes,
                     nsStyleContext* aStyleContext);
-  const AnimationProperty*
-  GetAnimationOfProperty(nsCSSPropertyID aProperty) const;
-  bool HasAnimationOfProperty(nsCSSPropertyID aProperty) const
+
+  // Returns true if the effect includes |aProperty| regardless of whether the
+  // property is overridden by !important rule.
+  bool HasAnimationOfProperty(nsCSSPropertyID aProperty) const;
+
+  // GetEffectiveAnimationOfProperty returns AnimationProperty corresponding
+  // to a given CSS property if the effect includes the property and the
+  // property is not overridden by !important rules.
+  // Also EffectiveAnimationOfProperty returns true under the same condition.
+  //
+  // NOTE: We don't currently check for !important rules for properties that
+  // can't run on the compositor.
+  bool HasEffectiveAnimationOfProperty(nsCSSPropertyID aProperty) const
   {
-    return GetAnimationOfProperty(aProperty) != nullptr;
+    return GetEffectiveAnimationOfProperty(aProperty) != nullptr;
   }
+  const AnimationProperty* GetEffectiveAnimationOfProperty(
+    nsCSSPropertyID aProperty) const;
+
   const InfallibleTArray<AnimationProperty>& Properties() const
   {
     return mProperties;

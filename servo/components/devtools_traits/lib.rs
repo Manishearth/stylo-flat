@@ -12,19 +12,18 @@
 #![allow(non_snake_case)]
 #![deny(unsafe_code)]
 
-#![feature(custom_derive, plugin, proc_macro, rustc_attrs, structural_match)]
-#![plugin(heapsize_plugin)]
+#![feature(proc_macro, rustc_attrs, structural_match)]
 
 #[allow(unused_extern_crates)]
 #[macro_use]
 extern crate bitflags;
 extern crate heapsize;
+#[macro_use] extern crate heapsize_derive;
 extern crate hyper;
 extern crate ipc_channel;
 extern crate msg;
 extern crate serde;
-#[macro_use]
-extern crate serde_derive;
+#[macro_use] extern crate serde_derive;
 extern crate time;
 extern crate url;
 
@@ -190,6 +189,7 @@ pub struct AutoMargins {
 }
 
 /// Messages to process in a particular script thread, as instructed by a devtools client.
+/// TODO: better error handling, e.g. if pipeline id lookup fails?
 #[derive(Deserialize, Serialize)]
 pub enum DevtoolScriptControlMsg {
     /// Evaluate a JS snippet in the context of the global for the given pipeline.
@@ -209,7 +209,7 @@ pub enum DevtoolScriptControlMsg {
     /// Request live console messages for a given pipeline (true if desired, false otherwise).
     WantsLiveNotifications(PipelineId, bool),
     /// Request live notifications for a given set of timeline events for a given pipeline.
-    SetTimelineMarkers(PipelineId, Vec<TimelineMarkerType>, IpcSender<TimelineMarker>),
+    SetTimelineMarkers(PipelineId, Vec<TimelineMarkerType>, IpcSender<Option<TimelineMarker>>),
     /// Withdraw request for live timeline notifications for a given pipeline.
     DropTimelineMarkers(PipelineId, Vec<TimelineMarkerType>),
     /// Request a callback directed at the given actor name from the next animation frame

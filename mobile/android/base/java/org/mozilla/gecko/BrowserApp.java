@@ -1519,13 +1519,6 @@ public class BrowserApp extends GeckoApp
         IntentHelper.destroy();
         GeckoNetworkManager.destroy();
 
-        if (SmsManager.isEnabled()) {
-            SmsManager.getInstance().stop();
-            if (isFinishing()) {
-                SmsManager.getInstance().shutdown();
-            }
-        }
-
         super.onDestroy();
 
         if (!isFinishing()) {
@@ -2120,15 +2113,17 @@ public class BrowserApp extends GeckoApp
                     break;
 
                 case "Video:Play":
-                    final String uri = message.getString("uri");
-                    final String uuid = message.getString("uuid");
-                    ThreadUtils.postToUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            mVideoPlayer.start(Uri.parse(uri));
-                            Telemetry.sendUIEvent(TelemetryContract.Event.SHOW, TelemetryContract.Method.CONTENT, "playhls");
-                        }
-                    });
+                    if (SwitchBoard.isInExperiment(this, Experiments.HLS_VIDEO_PLAYBACK)) {
+                        final String uri = message.getString("uri");
+                        final String uuid = message.getString("uuid");
+                        ThreadUtils.postToUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                mVideoPlayer.start(Uri.parse(uri));
+                                Telemetry.sendUIEvent(TelemetryContract.Event.SHOW, TelemetryContract.Method.CONTENT, "playhls");
+                            }
+                        });
+                    }
                     break;
 
                 case "Prompt:ShowTop":

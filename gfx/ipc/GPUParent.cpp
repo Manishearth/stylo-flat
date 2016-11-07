@@ -12,6 +12,7 @@
 #include "gfxPrefs.h"
 #include "GPUProcessHost.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/ipc/CrashReporterClient.h"
 #include "mozilla/ipc/ProcessChild.h"
@@ -21,14 +22,15 @@
 #include "mozilla/dom/VideoDecoderManagerParent.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeParent.h"
-#include "nsDebugImpl.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
-#include "ProcessUtils.h"
+#include "nsDebugImpl.h"
+#include "nsExceptionHandler.h"
+#include "nsThreadManager.h"
 #include "prenv.h"
+#include "ProcessUtils.h"
 #include "VRManager.h"
 #include "VRManagerParent.h"
 #include "VsyncBridgeParent.h"
-#include "nsExceptionHandler.h"
 #if defined(XP_WIN)
 # include "DeviceManagerD3D9.h"
 # include "mozilla/gfx/DeviceManagerDx.h"
@@ -66,6 +68,13 @@ GPUParent::Init(base::ProcessId aParentPid,
                 MessageLoop* aIOLoop,
                 IPC::Channel* aChannel)
 {
+  // Initialize the thread manager before starting IPC. Otherwise, messages
+  // may be posted to the main thread and we won't be able to process them.
+  if (NS_WARN_IF(NS_FAILED(nsThreadManager::get().Init()))) {
+    return false;
+  }
+
+  // Now it's safe to start IPC.
   if (NS_WARN_IF(!Open(aChannel, aParentPid, aIOLoop))) {
     return false;
   }
@@ -88,9 +97,11 @@ GPUParent::Init(base::ProcessId aParentPid,
   DeviceManagerDx::Init();
   DeviceManagerD3D9::Init();
 #endif
+
   if (NS_FAILED(NS_InitMinimalXPCOM())) {
     return false;
   }
+
   CompositorThreadHolder::Start();
   APZThreadUtils::SetControllerThread(CompositorThreadHolder::Loop());
   APZCTreeManager::InitializeGlobalState();
@@ -161,7 +172,7 @@ GPUParent::RecvInit(nsTArray<GfxPrefSetting>&& prefs,
 bool
 GPUParent::RecvInitVsyncBridge(Endpoint<PVsyncBridgeParent>&& aVsyncEndpoint)
 {
-  VsyncBridgeParent::Start(Move(aVsyncEndpoint));
+  mVsyncBridge = VsyncBridgeParent::Start(Move(aVsyncEndpoint));
   return true;
 }
 
@@ -284,16 +295,30 @@ GPUParent::RecvNewContentVideoDecoderManager(Endpoint<PVideoDecoderManagerParent
 }
 
 bool
-GPUParent::RecvDeallocateLayerTreeId(const uint64_t& aLayersId)
+GPUParent::RecvAddLayerTreeIdMapping(nsTArray<LayerTreeIdMapping>&& aMappings)
 {
-  CompositorBridgeParent::DeallocateLayerTreeId(aLayersId);
+  for (const LayerTreeIdMapping& map : aMappings) {
+    LayerTreeOwnerTracker::Get()->Map(map.layersId(), map.ownerId());
+  }
   return true;
 }
 
 bool
-GPUParent::RecvAddLayerTreeIdMapping(const uint64_t& aLayersId, const ProcessId& aOwnerId)
+GPUParent::RecvRemoveLayerTreeIdMapping(const LayerTreeIdMapping& aMapping)
 {
-  LayerTreeOwnerTracker::Get()->Map(aLayersId, aOwnerId);
+  LayerTreeOwnerTracker::Get()->Unmap(aMapping.layersId(), aMapping.ownerId());
+  CompositorBridgeParent::DeallocateLayerTreeId(aMapping.layersId());
+  return true;
+}
+
+bool
+GPUParent::RecvNotifyGpuObservers(const nsCString& aTopic)
+{
+  nsCOMPtr<nsIObserverService> obsSvc = mozilla::services::GetObserverService();
+  MOZ_ASSERT(obsSvc);
+  if (obsSvc) {
+    obsSvc->NotifyObservers(nullptr, aTopic.get(), nullptr);
+  }
   return true;
 }
 
@@ -317,8 +342,10 @@ GPUParent::ActorDestroy(ActorDestroyReason aWhy)
 
   if (mVsyncBridge) {
     mVsyncBridge->Shutdown();
+    mVsyncBridge = nullptr;
   }
   CompositorThreadHolder::Shutdown();
+  Factory::ShutDown();
 #if defined(XP_WIN)
   DeviceManagerDx::Shutdown();
   DeviceManagerD3D9::Shutdown();
@@ -330,7 +357,6 @@ GPUParent::ActorDestroy(ActorDestroyReason aWhy)
 #ifdef MOZ_CRASHREPORTER
   CrashReporterClient::DestroySingleton();
 #endif
-  NS_ShutdownXPCOM(nullptr);
   XRE_ShutdownChildProcess();
 }
 

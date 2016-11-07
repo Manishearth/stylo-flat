@@ -28,6 +28,7 @@
 #include "nsIObserverService.h"
 #include "nsIServiceManager.h"
 #include "nsThreadUtils.h"
+#include "VRManagerChild.h"
 #include "mozilla/Services.h"
 #include "mozilla/Unused.h"
 
@@ -50,6 +51,7 @@ const nsTArray<RefPtr<nsGlobalWindow>>::index_type NoIndex =
 bool sShutdown = false;
 
 StaticRefPtr<GamepadManager> gGamepadManagerSingleton;
+const uint32_t VR_GAMEPAD_IDX_OFFSET = 0x01 << 16;
 
 } // namespace
 
@@ -108,6 +110,11 @@ GamepadManager::StopMonitoring()
   }
   mChannelChildren.Clear();
   mGamepads.Clear();
+
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(XP_LINUX)
+  mVRChannelChild = gfx::VRManagerChild::Get();
+  mVRChannelChild->SendControllerListenerRemoved();
+#endif
 }
 
 void
@@ -188,10 +195,36 @@ GamepadManager::GetGamepad(uint32_t aIndex) const
   return nullptr;
 }
 
+uint32_t GamepadManager::GetGamepadIndexWithServiceType(uint32_t aIndex,
+                                                        GamepadServiceType aServiceType)
+{
+  uint32_t newIndex = 0;
+
+  switch (aServiceType) {
+    case GamepadServiceType::Standard:
+    {
+     MOZ_ASSERT(aIndex <= VR_GAMEPAD_IDX_OFFSET);
+     newIndex = aIndex;
+     break;
+    }
+    case GamepadServiceType::VR:
+    {
+     newIndex = aIndex + VR_GAMEPAD_IDX_OFFSET;
+     break;
+    }
+    default:
+     MOZ_ASSERT(false);
+     break;
+  }
+
+  return newIndex;
+}
+
 void
 GamepadManager::AddGamepad(uint32_t aIndex,
                            const nsAString& aId,
                            GamepadMappingType aMapping,
+                           GamepadServiceType aServiceType,
                            uint32_t aNumButtons,
                            uint32_t aNumAxes)
 {
@@ -204,35 +237,41 @@ GamepadManager::AddGamepad(uint32_t aIndex,
                 aNumButtons,
                 aNumAxes);
 
+  uint32_t newIndex = GetGamepadIndexWithServiceType(aIndex, aServiceType);
+
   // We store the gamepad related to its index given by the parent process,
   // and no duplicate index is allowed.
-  MOZ_ASSERT(!mGamepads.Get(aIndex, nullptr));
-  mGamepads.Put(aIndex, gamepad);
-  NewConnectionEvent(aIndex, true);
+  MOZ_ASSERT(!mGamepads.Get(newIndex, nullptr));
+  mGamepads.Put(newIndex, gamepad);
+  NewConnectionEvent(newIndex, true);
 }
 
 void
-GamepadManager::RemoveGamepad(uint32_t aIndex)
+GamepadManager::RemoveGamepad(uint32_t aIndex, GamepadServiceType aServiceType)
 {
-  RefPtr<Gamepad> gamepad = GetGamepad(aIndex);
+  uint32_t newIndex = GetGamepadIndexWithServiceType(aIndex, aServiceType);
+
+  RefPtr<Gamepad> gamepad = GetGamepad(newIndex);
   if (!gamepad) {
     NS_WARNING("Trying to delete gamepad with invalid index");
     return;
   }
   gamepad->SetConnected(false);
-  NewConnectionEvent(aIndex, false);
-  mGamepads.Remove(aIndex);
+  NewConnectionEvent(newIndex, false);
+  mGamepads.Remove(newIndex);
 }
 
 void
-GamepadManager::NewButtonEvent(uint32_t aIndex, uint32_t aButton, bool aPressed,
-                               double aValue)
+GamepadManager::NewButtonEvent(uint32_t aIndex, GamepadServiceType aServiceType,
+                               uint32_t aButton, bool aPressed, double aValue)
 {
   if (mShuttingDown) {
     return;
   }
 
-  RefPtr<Gamepad> gamepad = GetGamepad(aIndex);
+  uint32_t newIndex = GetGamepadIndexWithServiceType(aIndex, aServiceType);
+
+  RefPtr<Gamepad> gamepad = GetGamepad(newIndex);
   if (!gamepad) {
     return;
   }
@@ -254,9 +293,9 @@ GamepadManager::NewButtonEvent(uint32_t aIndex, uint32_t aButton, bool aPressed,
       continue;
     }
 
-    bool firstTime = MaybeWindowHasSeenGamepad(listeners[i], aIndex);
+    bool firstTime = MaybeWindowHasSeenGamepad(listeners[i], newIndex);
 
-    RefPtr<Gamepad> listenerGamepad = listeners[i]->GetGamepad(aIndex);
+    RefPtr<Gamepad> listenerGamepad = listeners[i]->GetGamepad(newIndex);
     if (listenerGamepad) {
       listenerGamepad->SetButton(aButton, aPressed, aValue);
       if (firstTime) {
@@ -293,13 +332,16 @@ GamepadManager::FireButtonEvent(EventTarget* aTarget,
 }
 
 void
-GamepadManager::NewAxisMoveEvent(uint32_t aIndex, uint32_t aAxis, double aValue)
+GamepadManager::NewAxisMoveEvent(uint32_t aIndex, GamepadServiceType aServiceType,
+                                 uint32_t aAxis, double aValue)
 {
   if (mShuttingDown) {
     return;
   }
 
-  RefPtr<Gamepad> gamepad = GetGamepad(aIndex);
+  uint32_t newIndex = GetGamepadIndexWithServiceType(aIndex, aServiceType);
+
+  RefPtr<Gamepad> gamepad = GetGamepad(newIndex);
   if (!gamepad) {
     return;
   }
@@ -320,9 +362,9 @@ GamepadManager::NewAxisMoveEvent(uint32_t aIndex, uint32_t aAxis, double aValue)
       continue;
     }
 
-    bool firstTime = MaybeWindowHasSeenGamepad(listeners[i], aIndex);
+    bool firstTime = MaybeWindowHasSeenGamepad(listeners[i], newIndex);
 
-    RefPtr<Gamepad> listenerGamepad = listeners[i]->GetGamepad(aIndex);
+    RefPtr<Gamepad> listenerGamepad = listeners[i]->GetGamepad(newIndex);
     if (listenerGamepad) {
       listenerGamepad->SetAxis(aAxis, aValue);
       if (firstTime) {
@@ -544,23 +586,24 @@ GamepadManager::Update(const GamepadChangeEvent& aEvent)
   if (aEvent.type() == GamepadChangeEvent::TGamepadAdded) {
     const GamepadAdded& a = aEvent.get_GamepadAdded();
     AddGamepad(a.index(), a.id(),
-               static_cast<GamepadMappingType>(a.mapping()),
+               a.mapping(), a.service_type(),
                a.num_buttons(), a.num_axes());
     return;
   }
   if (aEvent.type() == GamepadChangeEvent::TGamepadRemoved) {
     const GamepadRemoved& a = aEvent.get_GamepadRemoved();
-    RemoveGamepad(a.index());
+    RemoveGamepad(a.index(), a.service_type());
     return;
   }
   if (aEvent.type() == GamepadChangeEvent::TGamepadButtonInformation) {
     const GamepadButtonInformation& a = aEvent.get_GamepadButtonInformation();
-    NewButtonEvent(a.index(), a.button(), a.pressed(), a.value());
+    NewButtonEvent(a.index(), a.service_type(), a.button(),
+                   a.pressed(), a.value());
     return;
   }
   if (aEvent.type() == GamepadChangeEvent::TGamepadAxisInformation) {
     const GamepadAxisInformation& a = aEvent.get_GamepadAxisInformation();
-    NewAxisMoveEvent(a.index(), a.axis(), a.value());
+    NewAxisMoveEvent(a.index(), a.service_type(), a.axis(), a.value());
     return;
   }
 
@@ -584,8 +627,13 @@ GamepadManager::ActorCreated(PBackgroundChild *aActor)
   child->SendGamepadListenerAdded();
   mChannelChildren.AppendElement(child);
 
-  // TODO: Add more event channels to mChannelChildren if you would
-  // like to support more kinds of devices.
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(XP_LINUX)
+  // Construct VRManagerChannel and ask adding the connected
+  // VR controllers to GamepadManager
+  mVRChannelChild = gfx::VRManagerChild::Get();
+  mVRChannelChild->SetGamepadManager(this);
+  mVRChannelChild->SendControllerListenerAdded();
+#endif
 }
 
 //Override nsIIPCBackgroundChildCreateCallback

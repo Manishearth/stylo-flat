@@ -162,8 +162,6 @@ cfg_if! {
             pub static nsGkAtoms_any: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms6mozappE"]
             pub static nsGkAtoms_mozapp: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms9mozwidgetE"]
-            pub static nsGkAtoms_mozwidget: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms6appletE"]
             pub static nsGkAtoms_applet: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms12applyImportsE"]
@@ -798,6 +796,8 @@ cfg_if! {
             pub static nsGkAtoms_fullscreenerror: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms17functionAvailableE"]
             pub static nsGkAtoms_functionAvailable: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms12freshProcessE"]
+            pub static nsGkAtoms_freshProcess: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms10generateIdE"]
             pub static nsGkAtoms_generateId: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms6getterE"]
@@ -1072,6 +1072,8 @@ cfg_if! {
             pub static nsGkAtoms_listrows: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms4loadE"]
             pub static nsGkAtoms_load: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms16loadingprincipalE"]
+            pub static nsGkAtoms_loadingprincipal: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms9localedirE"]
             pub static nsGkAtoms_localedir: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms9localNameE"]
@@ -1352,6 +1354,8 @@ cfg_if! {
             pub static nsGkAtoms_onantennaavailablechange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms12onAppCommandE"]
             pub static nsGkAtoms_onAppCommand: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms14onappinstalledE"]
+            pub static nsGkAtoms_onappinstalled: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms18onattributechangedE"]
             pub static nsGkAtoms_onattributechanged: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms18onattributereadreqE"]
@@ -1422,8 +1426,6 @@ cfg_if! {
             pub static nsGkAtoms_oncompositionstart: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms19oncompositionupdateE"]
             pub static nsGkAtoms_oncompositionupdate: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms21onconfigurationchangeE"]
-            pub static nsGkAtoms_onconfigurationchange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms9onconnectE"]
             pub static nsGkAtoms_onconnect: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms11onconnectedE"]
@@ -1536,8 +1538,6 @@ cfg_if! {
             pub static nsGkAtoms_onerror: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms9onevictedE"]
             pub static nsGkAtoms_onevicted: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms15onfacesdetectedE"]
-            pub static nsGkAtoms_onfacesdetected: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms8onfailedE"]
             pub static nsGkAtoms_onfailed: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms7onfetchE"]
@@ -1546,6 +1546,10 @@ cfg_if! {
             pub static nsGkAtoms_onfinish: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms7onfocusE"]
             pub static nsGkAtoms_onfocus: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms9onfocusinE"]
+            pub static nsGkAtoms_onfocusin: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms10onfocusoutE"]
+            pub static nsGkAtoms_onfocusout: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms17onfrequencychangeE"]
             pub static nsGkAtoms_onfrequencychange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms18onfullscreenchangeE"]
@@ -1718,8 +1722,6 @@ cfg_if! {
             pub static nsGkAtoms_onpendingchange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms10onpichangeE"]
             pub static nsGkAtoms_onpichange: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms9onpictureE"]
-            pub static nsGkAtoms_onpicture: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms19onpointerlockchangeE"]
             pub static nsGkAtoms_onpointerlockchange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms18onpointerlockerrorE"]
@@ -1734,10 +1736,6 @@ cfg_if! {
             pub static nsGkAtoms_onpopupshowing: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms12onpopupshownE"]
             pub static nsGkAtoms_onpopupshown: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms8onposterE"]
-            pub static nsGkAtoms_onposter: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms20onpreviewstatechangeE"]
-            pub static nsGkAtoms_onpreviewstatechange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms18onpullphonebookreqE"]
             pub static nsGkAtoms_onpullphonebookreq: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms19onpullvcardentryreqE"]
@@ -1768,8 +1766,6 @@ cfg_if! {
             pub static nsGkAtoms_onreadystatechange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms10onreceivedE"]
             pub static nsGkAtoms_onreceived: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms21onrecorderstatechangeE"]
-            pub static nsGkAtoms_onrecorderstatechange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms12onremoteheldE"]
             pub static nsGkAtoms_onremoteheld: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms15onremoteresumedE"]
@@ -1810,8 +1806,6 @@ cfg_if! {
             pub static nsGkAtoms_onset: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms6onshowE"]
             pub static nsGkAtoms_onshow: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms9onshutterE"]
-            pub static nsGkAtoms_onshutter: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms13onstatechangeE"]
             pub static nsGkAtoms_onstatechange: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms15onstatuschangedE"]
@@ -1846,6 +1840,10 @@ cfg_if! {
             pub static nsGkAtoms_ontouchcancel: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms15ontransitionendE"]
             pub static nsGkAtoms_ontransitionend: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms15ontransitionrunE"]
+            pub static nsGkAtoms_ontransitionrun: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms17ontransitionstartE"]
+            pub static nsGkAtoms_ontransitionstart: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms11onunderflowE"]
             pub static nsGkAtoms_onunderflow: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms8onunloadE"]
@@ -2528,8 +2526,6 @@ cfg_if! {
             pub static nsGkAtoms_underflow: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms12undeterminedE"]
             pub static nsGkAtoms_undetermined: *mut nsIAtom;
-            #[link_name = "_ZN9nsGkAtoms9undoscopeE"]
-            pub static nsGkAtoms_undoscope: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms6unloadE"]
             pub static nsGkAtoms_unload: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms17unparsedEntityUriE"]
@@ -4494,10 +4490,14 @@ cfg_if! {
             pub static nsGkAtoms_aria_controls: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms16aria_describedbyE"]
             pub static nsGkAtoms_aria_describedby: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms12aria_detailsE"]
+            pub static nsGkAtoms_aria_details: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms13aria_disabledE"]
             pub static nsGkAtoms_aria_disabled: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms15aria_dropeffectE"]
             pub static nsGkAtoms_aria_dropeffect: *mut nsIAtom;
+            #[link_name = "_ZN9nsGkAtoms17aria_errormessageE"]
+            pub static nsGkAtoms_aria_errormessage: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms13aria_expandedE"]
             pub static nsGkAtoms_aria_expanded: *mut nsIAtom;
             #[link_name = "_ZN9nsGkAtoms11aria_flowtoE"]
@@ -5081,8 +5081,6 @@ cfg_if! {
             pub static nsGkAtoms_any: *mut nsIAtom;
             #[link_name = "?mozapp@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_mozapp: *mut nsIAtom;
-            #[link_name = "?mozwidget@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_mozwidget: *mut nsIAtom;
             #[link_name = "?applet@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_applet: *mut nsIAtom;
             #[link_name = "?applyImports@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -5717,6 +5715,8 @@ cfg_if! {
             pub static nsGkAtoms_fullscreenerror: *mut nsIAtom;
             #[link_name = "?functionAvailable@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_functionAvailable: *mut nsIAtom;
+            #[link_name = "?freshProcess@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_freshProcess: *mut nsIAtom;
             #[link_name = "?generateId@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_generateId: *mut nsIAtom;
             #[link_name = "?getter@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -5991,6 +5991,8 @@ cfg_if! {
             pub static nsGkAtoms_listrows: *mut nsIAtom;
             #[link_name = "?load@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_load: *mut nsIAtom;
+            #[link_name = "?loadingprincipal@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_loadingprincipal: *mut nsIAtom;
             #[link_name = "?localedir@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_localedir: *mut nsIAtom;
             #[link_name = "?localName@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6271,6 +6273,8 @@ cfg_if! {
             pub static nsGkAtoms_onantennaavailablechange: *mut nsIAtom;
             #[link_name = "?onAppCommand@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onAppCommand: *mut nsIAtom;
+            #[link_name = "?onappinstalled@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_onappinstalled: *mut nsIAtom;
             #[link_name = "?onattributechanged@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onattributechanged: *mut nsIAtom;
             #[link_name = "?onattributereadreq@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6341,8 +6345,6 @@ cfg_if! {
             pub static nsGkAtoms_oncompositionstart: *mut nsIAtom;
             #[link_name = "?oncompositionupdate@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_oncompositionupdate: *mut nsIAtom;
-            #[link_name = "?onconfigurationchange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_onconfigurationchange: *mut nsIAtom;
             #[link_name = "?onconnect@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onconnect: *mut nsIAtom;
             #[link_name = "?onconnected@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6455,8 +6457,6 @@ cfg_if! {
             pub static nsGkAtoms_onerror: *mut nsIAtom;
             #[link_name = "?onevicted@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onevicted: *mut nsIAtom;
-            #[link_name = "?onfacesdetected@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_onfacesdetected: *mut nsIAtom;
             #[link_name = "?onfailed@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onfailed: *mut nsIAtom;
             #[link_name = "?onfetch@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6465,6 +6465,10 @@ cfg_if! {
             pub static nsGkAtoms_onfinish: *mut nsIAtom;
             #[link_name = "?onfocus@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onfocus: *mut nsIAtom;
+            #[link_name = "?onfocusin@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_onfocusin: *mut nsIAtom;
+            #[link_name = "?onfocusout@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_onfocusout: *mut nsIAtom;
             #[link_name = "?onfrequencychange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onfrequencychange: *mut nsIAtom;
             #[link_name = "?onfullscreenchange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6637,8 +6641,6 @@ cfg_if! {
             pub static nsGkAtoms_onpendingchange: *mut nsIAtom;
             #[link_name = "?onpichange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onpichange: *mut nsIAtom;
-            #[link_name = "?onpicture@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_onpicture: *mut nsIAtom;
             #[link_name = "?onpointerlockchange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onpointerlockchange: *mut nsIAtom;
             #[link_name = "?onpointerlockerror@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6653,10 +6655,6 @@ cfg_if! {
             pub static nsGkAtoms_onpopupshowing: *mut nsIAtom;
             #[link_name = "?onpopupshown@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onpopupshown: *mut nsIAtom;
-            #[link_name = "?onposter@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_onposter: *mut nsIAtom;
-            #[link_name = "?onpreviewstatechange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_onpreviewstatechange: *mut nsIAtom;
             #[link_name = "?onpullphonebookreq@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onpullphonebookreq: *mut nsIAtom;
             #[link_name = "?onpullvcardentryreq@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6687,8 +6685,6 @@ cfg_if! {
             pub static nsGkAtoms_onreadystatechange: *mut nsIAtom;
             #[link_name = "?onreceived@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onreceived: *mut nsIAtom;
-            #[link_name = "?onrecorderstatechange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_onrecorderstatechange: *mut nsIAtom;
             #[link_name = "?onremoteheld@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onremoteheld: *mut nsIAtom;
             #[link_name = "?onremoteresumed@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6729,8 +6725,6 @@ cfg_if! {
             pub static nsGkAtoms_onset: *mut nsIAtom;
             #[link_name = "?onshow@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onshow: *mut nsIAtom;
-            #[link_name = "?onshutter@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_onshutter: *mut nsIAtom;
             #[link_name = "?onstatechange@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onstatechange: *mut nsIAtom;
             #[link_name = "?onstatuschanged@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -6765,6 +6759,10 @@ cfg_if! {
             pub static nsGkAtoms_ontouchcancel: *mut nsIAtom;
             #[link_name = "?ontransitionend@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_ontransitionend: *mut nsIAtom;
+            #[link_name = "?ontransitionrun@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_ontransitionrun: *mut nsIAtom;
+            #[link_name = "?ontransitionstart@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_ontransitionstart: *mut nsIAtom;
             #[link_name = "?onunderflow@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_onunderflow: *mut nsIAtom;
             #[link_name = "?onunload@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -7447,8 +7445,6 @@ cfg_if! {
             pub static nsGkAtoms_underflow: *mut nsIAtom;
             #[link_name = "?undetermined@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_undetermined: *mut nsIAtom;
-            #[link_name = "?undoscope@nsGkAtoms@@2PEAVnsIAtom@@EA"]
-            pub static nsGkAtoms_undoscope: *mut nsIAtom;
             #[link_name = "?unload@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_unload: *mut nsIAtom;
             #[link_name = "?unparsedEntityUri@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -9413,10 +9409,14 @@ cfg_if! {
             pub static nsGkAtoms_aria_controls: *mut nsIAtom;
             #[link_name = "?aria_describedby@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_aria_describedby: *mut nsIAtom;
+            #[link_name = "?aria_details@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_aria_details: *mut nsIAtom;
             #[link_name = "?aria_disabled@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_aria_disabled: *mut nsIAtom;
             #[link_name = "?aria_dropeffect@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_aria_dropeffect: *mut nsIAtom;
+            #[link_name = "?aria_errormessage@nsGkAtoms@@2PEAVnsIAtom@@EA"]
+            pub static nsGkAtoms_aria_errormessage: *mut nsIAtom;
             #[link_name = "?aria_expanded@nsGkAtoms@@2PEAVnsIAtom@@EA"]
             pub static nsGkAtoms_aria_expanded: *mut nsIAtom;
             #[link_name = "?aria_flowto@nsGkAtoms@@2PEAVnsIAtom@@EA"]
@@ -10000,8 +10000,6 @@ cfg_if! {
             pub static nsGkAtoms_any: *mut nsIAtom;
             #[link_name = "\x01?mozapp@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_mozapp: *mut nsIAtom;
-            #[link_name = "\x01?mozwidget@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_mozwidget: *mut nsIAtom;
             #[link_name = "\x01?applet@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_applet: *mut nsIAtom;
             #[link_name = "\x01?applyImports@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -10636,6 +10634,8 @@ cfg_if! {
             pub static nsGkAtoms_fullscreenerror: *mut nsIAtom;
             #[link_name = "\x01?functionAvailable@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_functionAvailable: *mut nsIAtom;
+            #[link_name = "\x01?freshProcess@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_freshProcess: *mut nsIAtom;
             #[link_name = "\x01?generateId@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_generateId: *mut nsIAtom;
             #[link_name = "\x01?getter@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -10910,6 +10910,8 @@ cfg_if! {
             pub static nsGkAtoms_listrows: *mut nsIAtom;
             #[link_name = "\x01?load@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_load: *mut nsIAtom;
+            #[link_name = "\x01?loadingprincipal@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_loadingprincipal: *mut nsIAtom;
             #[link_name = "\x01?localedir@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_localedir: *mut nsIAtom;
             #[link_name = "\x01?localName@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11190,6 +11192,8 @@ cfg_if! {
             pub static nsGkAtoms_onantennaavailablechange: *mut nsIAtom;
             #[link_name = "\x01?onAppCommand@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onAppCommand: *mut nsIAtom;
+            #[link_name = "\x01?onappinstalled@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_onappinstalled: *mut nsIAtom;
             #[link_name = "\x01?onattributechanged@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onattributechanged: *mut nsIAtom;
             #[link_name = "\x01?onattributereadreq@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11260,8 +11264,6 @@ cfg_if! {
             pub static nsGkAtoms_oncompositionstart: *mut nsIAtom;
             #[link_name = "\x01?oncompositionupdate@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_oncompositionupdate: *mut nsIAtom;
-            #[link_name = "\x01?onconfigurationchange@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_onconfigurationchange: *mut nsIAtom;
             #[link_name = "\x01?onconnect@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onconnect: *mut nsIAtom;
             #[link_name = "\x01?onconnected@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11374,8 +11376,6 @@ cfg_if! {
             pub static nsGkAtoms_onerror: *mut nsIAtom;
             #[link_name = "\x01?onevicted@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onevicted: *mut nsIAtom;
-            #[link_name = "\x01?onfacesdetected@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_onfacesdetected: *mut nsIAtom;
             #[link_name = "\x01?onfailed@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onfailed: *mut nsIAtom;
             #[link_name = "\x01?onfetch@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11384,6 +11384,10 @@ cfg_if! {
             pub static nsGkAtoms_onfinish: *mut nsIAtom;
             #[link_name = "\x01?onfocus@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onfocus: *mut nsIAtom;
+            #[link_name = "\x01?onfocusin@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_onfocusin: *mut nsIAtom;
+            #[link_name = "\x01?onfocusout@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_onfocusout: *mut nsIAtom;
             #[link_name = "\x01?onfrequencychange@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onfrequencychange: *mut nsIAtom;
             #[link_name = "\x01?onfullscreenchange@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11556,8 +11560,6 @@ cfg_if! {
             pub static nsGkAtoms_onpendingchange: *mut nsIAtom;
             #[link_name = "\x01?onpichange@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onpichange: *mut nsIAtom;
-            #[link_name = "\x01?onpicture@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_onpicture: *mut nsIAtom;
             #[link_name = "\x01?onpointerlockchange@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onpointerlockchange: *mut nsIAtom;
             #[link_name = "\x01?onpointerlockerror@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11572,10 +11574,6 @@ cfg_if! {
             pub static nsGkAtoms_onpopupshowing: *mut nsIAtom;
             #[link_name = "\x01?onpopupshown@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onpopupshown: *mut nsIAtom;
-            #[link_name = "\x01?onposter@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_onposter: *mut nsIAtom;
-            #[link_name = "\x01?onpreviewstatechange@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_onpreviewstatechange: *mut nsIAtom;
             #[link_name = "\x01?onpullphonebookreq@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onpullphonebookreq: *mut nsIAtom;
             #[link_name = "\x01?onpullvcardentryreq@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11606,8 +11604,6 @@ cfg_if! {
             pub static nsGkAtoms_onreadystatechange: *mut nsIAtom;
             #[link_name = "\x01?onreceived@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onreceived: *mut nsIAtom;
-            #[link_name = "\x01?onrecorderstatechange@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_onrecorderstatechange: *mut nsIAtom;
             #[link_name = "\x01?onremoteheld@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onremoteheld: *mut nsIAtom;
             #[link_name = "\x01?onremoteresumed@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11648,8 +11644,6 @@ cfg_if! {
             pub static nsGkAtoms_onset: *mut nsIAtom;
             #[link_name = "\x01?onshow@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onshow: *mut nsIAtom;
-            #[link_name = "\x01?onshutter@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_onshutter: *mut nsIAtom;
             #[link_name = "\x01?onstatechange@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onstatechange: *mut nsIAtom;
             #[link_name = "\x01?onstatuschanged@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -11684,6 +11678,10 @@ cfg_if! {
             pub static nsGkAtoms_ontouchcancel: *mut nsIAtom;
             #[link_name = "\x01?ontransitionend@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_ontransitionend: *mut nsIAtom;
+            #[link_name = "\x01?ontransitionrun@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_ontransitionrun: *mut nsIAtom;
+            #[link_name = "\x01?ontransitionstart@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_ontransitionstart: *mut nsIAtom;
             #[link_name = "\x01?onunderflow@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_onunderflow: *mut nsIAtom;
             #[link_name = "\x01?onunload@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -12366,8 +12364,6 @@ cfg_if! {
             pub static nsGkAtoms_underflow: *mut nsIAtom;
             #[link_name = "\x01?undetermined@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_undetermined: *mut nsIAtom;
-            #[link_name = "\x01?undoscope@nsGkAtoms@@2PAVnsIAtom@@A"]
-            pub static nsGkAtoms_undoscope: *mut nsIAtom;
             #[link_name = "\x01?unload@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_unload: *mut nsIAtom;
             #[link_name = "\x01?unparsedEntityUri@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -14332,10 +14328,14 @@ cfg_if! {
             pub static nsGkAtoms_aria_controls: *mut nsIAtom;
             #[link_name = "\x01?aria_describedby@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_aria_describedby: *mut nsIAtom;
+            #[link_name = "\x01?aria_details@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_aria_details: *mut nsIAtom;
             #[link_name = "\x01?aria_disabled@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_aria_disabled: *mut nsIAtom;
             #[link_name = "\x01?aria_dropeffect@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_aria_dropeffect: *mut nsIAtom;
+            #[link_name = "\x01?aria_errormessage@nsGkAtoms@@2PAVnsIAtom@@A"]
+            pub static nsGkAtoms_aria_errormessage: *mut nsIAtom;
             #[link_name = "\x01?aria_expanded@nsGkAtoms@@2PAVnsIAtom@@A"]
             pub static nsGkAtoms_aria_expanded: *mut nsIAtom;
             #[link_name = "\x01?aria_flowto@nsGkAtoms@@2PAVnsIAtom@@A"]
@@ -14922,8 +14922,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_any as *mut _) } };
 ("mozapp") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_mozapp as *mut _) } };
-("mozwidget") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_mozwidget as *mut _) } };
 ("applet") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_applet as *mut _) } };
 ("apply-imports") =>
@@ -15558,6 +15556,8 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_fullscreenerror as *mut _) } };
 ("function-available") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_functionAvailable as *mut _) } };
+("freshProcess") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_freshProcess as *mut _) } };
 ("generate-id") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_generateId as *mut _) } };
 ("getter") =>
@@ -15832,6 +15832,8 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_listrows as *mut _) } };
 ("load") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_load as *mut _) } };
+("loadingprincipal") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_loadingprincipal as *mut _) } };
 ("localedir") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_localedir as *mut _) } };
 ("local-name") =>
@@ -16112,6 +16114,8 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onantennaavailablechange as *mut _) } };
 ("onAppCommand") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onAppCommand as *mut _) } };
+("onappinstalled") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onappinstalled as *mut _) } };
 ("onattributechanged") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onattributechanged as *mut _) } };
 ("onattributereadreq") =>
@@ -16182,8 +16186,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_oncompositionstart as *mut _) } };
 ("oncompositionupdate") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_oncompositionupdate as *mut _) } };
-("onconfigurationchange") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onconfigurationchange as *mut _) } };
 ("onconnect") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onconnect as *mut _) } };
 ("onconnected") =>
@@ -16296,8 +16298,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onerror as *mut _) } };
 ("onevicted") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onevicted as *mut _) } };
-("onfacesdetected") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onfacesdetected as *mut _) } };
 ("onfailed") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onfailed as *mut _) } };
 ("onfetch") =>
@@ -16306,6 +16306,10 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onfinish as *mut _) } };
 ("onfocus") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onfocus as *mut _) } };
+("onfocusin") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onfocusin as *mut _) } };
+("onfocusout") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onfocusout as *mut _) } };
 ("onfrequencychange") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onfrequencychange as *mut _) } };
 ("onfullscreenchange") =>
@@ -16478,8 +16482,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpendingchange as *mut _) } };
 ("onpichange") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpichange as *mut _) } };
-("onpicture") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpicture as *mut _) } };
 ("onpointerlockchange") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpointerlockchange as *mut _) } };
 ("onpointerlockerror") =>
@@ -16494,10 +16496,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpopupshowing as *mut _) } };
 ("onpopupshown") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpopupshown as *mut _) } };
-("onposter") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onposter as *mut _) } };
-("onpreviewstatechange") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpreviewstatechange as *mut _) } };
 ("onpullphonebookreq") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onpullphonebookreq as *mut _) } };
 ("onpullvcardentryreq") =>
@@ -16528,8 +16526,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onreadystatechange as *mut _) } };
 ("onreceived") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onreceived as *mut _) } };
-("onrecorderstatechange") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onrecorderstatechange as *mut _) } };
 ("onremoteheld") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onremoteheld as *mut _) } };
 ("onremoteresumed") =>
@@ -16570,8 +16566,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onset as *mut _) } };
 ("onshow") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onshow as *mut _) } };
-("onshutter") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onshutter as *mut _) } };
 ("onstatechange") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onstatechange as *mut _) } };
 ("onstatuschanged") =>
@@ -16606,6 +16600,10 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_ontouchcancel as *mut _) } };
 ("ontransitionend") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_ontransitionend as *mut _) } };
+("ontransitionrun") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_ontransitionrun as *mut _) } };
+("ontransitionstart") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_ontransitionstart as *mut _) } };
 ("onunderflow") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_onunderflow as *mut _) } };
 ("onunload") =>
@@ -17288,8 +17286,6 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_underflow as *mut _) } };
 ("undetermined") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_undetermined as *mut _) } };
-("undoscope") =>
-  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_undoscope as *mut _) } };
 ("unload") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_unload as *mut _) } };
 ("unparsed-entity-uri") =>
@@ -19254,10 +19250,14 @@ macro_rules! atom {
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_aria_controls as *mut _) } };
 ("aria-describedby") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_aria_describedby as *mut _) } };
+("aria-details") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_aria_details as *mut _) } };
 ("aria-disabled") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_aria_disabled as *mut _) } };
 ("aria-dropeffect") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_aria_dropeffect as *mut _) } };
+("aria-errormessage") =>
+  { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_aria_errormessage as *mut _) } };
 ("aria-expanded") =>
   { unsafe { $crate::string_cache::atom_macro::atom_from_static($crate::string_cache::atom_macro::nsGkAtoms_aria_expanded as *mut _) } };
 ("aria-flowto") =>

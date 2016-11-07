@@ -18,7 +18,6 @@ const { ADDON_SIGNING, REQUIRE_SIGNING } = CONSTANTS
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/AddonManager.jsm");
-/*globals AddonManagerPrivate*/
 Cu.import("resource://gre/modules/Preferences.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "AddonRepository",
@@ -306,7 +305,7 @@ const LOGGER_ID = "addons.xpi";
 var logger = Log.repository.getLogger(LOGGER_ID);
 
 const LAZY_OBJECTS = ["XPIDatabase", "XPIDatabaseReconcile"];
-/*globals XPIDatabase, XPIDatabaseReconcile*/
+/* globals XPIDatabase, XPIDatabaseReconcile*/
 
 var gLazyObjectsLoaded = false;
 
@@ -1003,7 +1002,8 @@ var loadManifestFromWebManifest = Task.async(function*(aUri) {
     // localization placeholders still in place.
     let rawManifest = extension.rawManifest;
 
-    let creator = rawManifest.author;
+    // As a convenience, allow author to be set if its a string bug 1313567.
+    let creator = typeof(rawManifest.author) === 'string' ? rawManifest.author : null;
     let homepageURL = rawManifest.homepage_url;
 
     // Allow developer to override creator and homepage_url.
@@ -4773,11 +4773,13 @@ this.XPIProvider = {
    *         Boolean indicating whether the add-on can run in safe mode.
    * @param  aDependencies
    *         An array of add-on IDs on which this add-on depends.
+   * @param  hasEmbeddedWebExtension
+   *         Boolean indicating whether the add-on has an embedded webextension.
    * @return a JavaScript scope
    */
   loadBootstrapScope: function(aId, aFile, aVersion, aType,
                                aMultiprocessCompatible, aRunInSafeMode,
-                               aDependencies) {
+                               aDependencies, hasEmbeddedWebExtension) {
     // Mark the add-on as active for the crash reporter before loading
     this.bootstrappedAddons[aId] = {
       version: aVersion,
@@ -4786,6 +4788,7 @@ this.XPIProvider = {
       multiprocessCompatible: aMultiprocessCompatible,
       runInSafeMode: aRunInSafeMode,
       dependencies: aDependencies,
+      hasEmbeddedWebExtension,
     };
     this.persistBootstrappedAddons();
     this.addAddonsToCrashReporter();
@@ -4942,7 +4945,8 @@ this.XPIProvider = {
       if (!activeAddon) {
         this.loadBootstrapScope(aAddon.id, aFile, aAddon.version, aAddon.type,
                                 aAddon.multiprocessCompatible || false,
-                                runInSafeMode, aAddon.dependencies);
+                                runInSafeMode, aAddon.dependencies,
+                                aAddon.hasEmbeddedWebExtension || false);
         activeAddon = this.activeAddons.get(aAddon.id);
       }
 
@@ -5162,6 +5166,7 @@ this.XPIProvider = {
             multiprocessCompatible: aAddon.multiprocessCompatible,
             runInSafeMode: canRunInSafeMode(aAddon),
             dependencies: aAddon.dependencies,
+            hasEmbeddedWebExtension: aAddon.hasEmbeddedWebExtension,
           };
           this.persistBootstrappedAddons();
         }
@@ -8648,6 +8653,11 @@ Object.assign(SystemAddonInstallLocation.prototype, {
 
     if (!aAddon.bootstrap) {
       logger.warn(`System add-on ${aAddon.id} isn't restartless.`);
+      return false;
+    }
+
+    if (!aAddon.multiprocessCompatible) {
+      logger.warn(`System add-on ${aAddon.id} isn't multiprocess compatible.`);
       return false;
     }
 

@@ -75,11 +75,8 @@ ServoStyleSheet::ParseSheet(const nsAString& aInput,
   NS_ENSURE_SUCCESS(rv, rv);
 
   NS_ConvertUTF16toUTF8 input(aInput);
-  mSheet = Servo_StyleSheet_FromUTF8Bytes(
-      reinterpret_cast<const uint8_t*>(input.get()), input.Length(),
-      mParsingMode,
-      reinterpret_cast<const uint8_t*>(baseString.get()), baseString.Length(),
-      base, referrer, principal).Consume();
+  mSheet = Servo_StyleSheet_FromUTF8Bytes(&input, mParsingMode, &baseString,
+                                          base, referrer, principal).Consume();
 
   return NS_OK;
 }
@@ -103,5 +100,38 @@ ServoStyleSheet::List(FILE* aOut, int32_t aIndex) const
   MOZ_CRASH("stylo: not implemented");
 }
 #endif
+
+nsMediaList*
+ServoStyleSheet::Media()
+{
+  return nullptr;
+}
+
+nsIDOMCSSRule*
+ServoStyleSheet::GetDOMOwnerRule() const
+{
+  return nullptr;
+}
+
+CSSRuleList*
+ServoStyleSheet::GetCssRulesInternal(ErrorResult& aRv)
+{
+  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+  return nullptr;
+}
+
+uint32_t
+ServoStyleSheet::InsertRuleInternal(const nsAString& aRule,
+                                    uint32_t aIndex, ErrorResult& aRv)
+{
+  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+  return 0;
+}
+
+void
+ServoStyleSheet::DeleteRuleInternal(uint32_t aIndex, ErrorResult& aRv)
+{
+  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+}
 
 } // namespace mozilla

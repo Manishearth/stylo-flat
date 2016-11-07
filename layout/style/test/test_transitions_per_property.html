@@ -188,8 +188,6 @@ var supported_properties = {
     "margin-top": [ test_length_transition, test_percent_transition,
                     test_length_percent_calc_transition,
                     test_length_unclamped, test_percent_unclamped ],
-    "marker-offset": [ test_length_transition,
-                       test_length_unclamped ],
     "max-height": [ test_length_transition, test_percent_transition,
                     test_length_clamped, test_percent_clamped ],
     "max-width": [ test_length_transition, test_percent_transition,
@@ -554,7 +552,7 @@ var transformTests = [
   // Similar decomposition tests, but with skewX.  I checked visually
   // that the sign of the skew was correct by checking visually that
   // the animations in
-  // http://dbaron.org/css/test/2010/transition-negative-determinant
+  // https://dbaron.org/css/test/2010/transition-negative-determinant
   // don't flip when they finish, and then wrote tests corresponding
   // to the current code's behavior.
   // ... start with four with positive determinants

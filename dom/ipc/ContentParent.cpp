@@ -36,6 +36,7 @@
 #include "mozIApplication.h"
 #if defined(XP_WIN) && defined(ACCESSIBILITY)
 #include "mozilla/a11y/AccessibleWrap.h"
+#include "mozilla/WindowsVersion.h"
 #endif
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -49,18 +50,15 @@
 #include "mozilla/dom/ExternalHelperAppParent.h"
 #include "mozilla/dom/GetFilesHelper.h"
 #include "mozilla/dom/GeolocationBinding.h"
-#include "mozilla/dom/MediaKeySystemAccess.h"
 #include "mozilla/dom/Notification.h"
 #include "mozilla/dom/PContentBridgeParent.h"
 #include "mozilla/dom/PContentPermissionRequestParent.h"
 #include "mozilla/dom/PCycleCollectWithLogsParent.h"
 #include "mozilla/dom/PMemoryReportRequestParent.h"
 #include "mozilla/dom/ServiceWorkerRegistrar.h"
-#include "mozilla/dom/bluetooth/PBluetoothParent.h"
 #include "mozilla/dom/devicestorage/DeviceStorageRequestParent.h"
 #include "mozilla/dom/icc/IccParent.h"
 #include "mozilla/dom/mobileconnection/MobileConnectionParent.h"
-#include "mozilla/dom/mobilemessage/SmsParent.h"
 #include "mozilla/dom/power/PowerManagerService.h"
 #include "mozilla/dom/Permissions.h"
 #include "mozilla/dom/PresentationParent.h"
@@ -68,9 +66,7 @@
 #include "mozilla/dom/PushNotifier.h"
 #include "mozilla/dom/FlyWebPublishedServerIPC.h"
 #include "mozilla/dom/quota/QuotaManagerService.h"
-#include "mozilla/dom/telephony/TelephonyParent.h"
 #include "mozilla/dom/time/DateCacheCleaner.h"
-#include "mozilla/dom/voicemail/VoicemailParent.h"
 #include "mozilla/embedding/printingui/PrintingParent.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/GPUProcessManager.h"
@@ -86,7 +82,6 @@
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeParent.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
-#include "mozilla/layers/SharedBufferManagerParent.h"
 #include "mozilla/layout/RenderFrameParent.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/media/MediaParent.h"
@@ -228,11 +223,6 @@ using namespace mozilla::system;
 #include <gdk/gdk.h>
 #endif
 
-#ifdef MOZ_B2G_BT
-#include "BluetoothParent.h"
-#include "BluetoothService.h"
-#endif
-
 #include "mozilla/RemoteSpellCheckEngineParent.h"
 
 #include "Crypto.h"
@@ -287,14 +277,10 @@ using mozilla::ProfileGatherer;
 #ifdef MOZ_CRASHREPORTER
 using namespace CrashReporter;
 #endif
-using namespace mozilla::dom::bluetooth;
 using namespace mozilla::dom::devicestorage;
 using namespace mozilla::dom::icc;
 using namespace mozilla::dom::power;
 using namespace mozilla::dom::mobileconnection;
-using namespace mozilla::dom::mobilemessage;
-using namespace mozilla::dom::telephony;
-using namespace mozilla::dom::voicemail;
 using namespace mozilla::media;
 using namespace mozilla::embedding;
 using namespace mozilla::gfx;
@@ -525,6 +511,7 @@ ContentParentsMemoryReporter::CollectReports(
 
 nsDataHashtable<nsStringHashKey, ContentParent*>* ContentParent::sAppContentParents;
 nsTArray<ContentParent*>* ContentParent::sNonAppContentParents;
+nsTArray<ContentParent*>* ContentParent::sLargeAllocationContentParents;
 nsTArray<ContentParent*>* ContentParent::sPrivateContent;
 StaticAutoPtr<LinkedList<ContentParent> > ContentParent::sContentParents;
 #if defined(XP_LINUX) && defined(MOZ_CONTENT_SANDBOX)
@@ -566,7 +553,6 @@ static const char* sObserverTopics[] = {
 #ifdef ACCESSIBILITY
   "a11y-init-or-shutdown",
 #endif
-  "app-theme-changed",
 #ifdef MOZ_ENABLE_PROFILER_SPS
   "profiler-started",
   "profiler-stopped",
@@ -755,25 +741,46 @@ ContentParent::JoinAllSubprocesses()
 /*static*/ already_AddRefed<ContentParent>
 ContentParent::GetNewOrUsedBrowserProcess(bool aForBrowserElement,
                                           ProcessPriority aPriority,
-                                          ContentParent* aOpener)
+                                          ContentParent* aOpener,
+                                          bool aLargeAllocationProcess)
 {
-  if (!sNonAppContentParents)
-    sNonAppContentParents = new nsTArray<ContentParent*>();
+  nsTArray<ContentParent*>* contentParents;
+  int32_t maxContentParents;
 
-  int32_t maxContentProcesses = Preferences::GetInt("dom.ipc.processCount", 1);
-  if (maxContentProcesses < 1)
-    maxContentProcesses = 1;
+  // Decide which pool of content parents we are going to be pulling from based
+  // on the aLargeAllocationProcess flag.
+  if (aLargeAllocationProcess) {
+    if (!sLargeAllocationContentParents) {
+      sLargeAllocationContentParents = new nsTArray<ContentParent*>();
+    }
+    contentParents = sLargeAllocationContentParents;
 
-  if (sNonAppContentParents->Length() >= uint32_t(maxContentProcesses)) {
-    uint32_t startIdx = rand() % sNonAppContentParents->Length();
+    maxContentParents = Preferences::GetInt("dom.ipc.dedicatedProcessCount", 2);
+  } else {
+    if (!sNonAppContentParents) {
+      sNonAppContentParents = new nsTArray<ContentParent*>();
+    }
+    contentParents = sNonAppContentParents;
+
+    maxContentParents = Preferences::GetInt("dom.ipc.processCount", 1);
+  }
+
+  if (maxContentParents < 1) {
+    maxContentParents = 1;
+  }
+
+  if (contentParents->Length() >= uint32_t(maxContentParents)) {
+    uint32_t maxSelectable = std::min(static_cast<uint32_t>(contentParents->Length()),
+                                      static_cast<uint32_t>(maxContentParents));
+    uint32_t startIdx = rand() % maxSelectable;
     uint32_t currIdx = startIdx;
     do {
-    RefPtr<ContentParent> p = (*sNonAppContentParents)[currIdx];
-    NS_ASSERTION(p->IsAlive(), "Non-alive contentparent in sNonAppContntParents?");
-    if (p->mOpener == aOpener) {
-      return p.forget();
-    }
-    currIdx = (currIdx + 1) % sNonAppContentParents->Length();
+      RefPtr<ContentParent> p = (*contentParents)[currIdx];
+      NS_ASSERTION(p->IsAlive(), "Non-alive contentparent in sNonAppContntParents?");
+      if (p->mOpener == aOpener) {
+        return p.forget();
+      }
+      currIdx = (currIdx + 1) % maxSelectable;
     } while (currIdx != startIdx);
   }
 
@@ -786,7 +793,7 @@ ContentParent::GetNewOrUsedBrowserProcess(bool aForBrowserElement,
     p = new ContentParent(/* app = */ nullptr,
                           aOpener,
                           aForBrowserElement,
-                           /* isForPreallocated = */ false);
+                          /* isForPreallocated = */ false);
 
     if (!p->LaunchSubprocess(aPriority)) {
       return nullptr;
@@ -794,9 +801,12 @@ ContentParent::GetNewOrUsedBrowserProcess(bool aForBrowserElement,
 
     p->Init();
   }
+
+  p->mLargeAllocationProcess = aLargeAllocationProcess;
+
   p->ForwardKnownInfo();
 
-  sNonAppContentParents->AppendElement(p);
+  contentParents->AppendElement(p);
   return p.forget();
 }
 
@@ -953,29 +963,6 @@ ContentParent::RecvCreateGMPService()
 }
 
 bool
-ContentParent::RecvGetGMPPluginVersionForAPI(const nsCString& aAPI,
-                                             nsTArray<nsCString>&& aTags,
-                                             bool* aHasVersion,
-                                             nsCString* aVersion)
-{
-  return GMPServiceParent::RecvGetGMPPluginVersionForAPI(aAPI, Move(aTags),
-                                                         aHasVersion,
-                                                         aVersion);
-}
-
-bool
-ContentParent::RecvIsGMPPresentOnDisk(const nsString& aKeySystem,
-                                      const nsCString& aVersion,
-                                      bool* aIsPresent,
-                                      nsCString* aMessage)
-{
-  *aIsPresent = MediaKeySystemAccess::IsGMPPresentOnDisk(aKeySystem,
-                                                         aVersion,
-                                                         *aMessage);
-  return true;
-}
-
-bool
 ContentParent::RecvLoadPlugin(const uint32_t& aPluginId, nsresult* aRv, uint32_t* aRunID)
 {
   *aRv = NS_OK;
@@ -1055,7 +1042,8 @@ ContentParent::RecvInitVideoDecoderManager(Endpoint<PVideoDecoderManagerChild>* 
 /*static*/ TabParent*
 ContentParent::CreateBrowserOrApp(const TabContext& aContext,
                                   Element* aFrameElement,
-                                  ContentParent* aOpenerContentParent)
+                                  ContentParent* aOpenerContentParent,
+                                  bool aFreshProcess)
 {
   PROFILER_LABEL_FUNC(js::ProfileEntry::Category::OTHER);
 
@@ -1090,7 +1078,9 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
       } else {
         constructorSender =
           GetNewOrUsedBrowserProcess(aContext.IsMozBrowserElement(),
-                                     initialPriority);
+                                     initialPriority,
+                                     nullptr,
+                                     aFreshProcess);
         if (!constructorSender) {
           return nullptr;
         }
@@ -1137,6 +1127,10 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
         constructorSender->ChildID(),
         constructorSender->IsForApp(),
         constructorSender->IsForBrowser());
+
+      if (aFreshProcess) {
+        Unused << browser->SendSetFreshProcess();
+      }
 
       if (browser) {
         RefPtr<TabParent> constructedTabParent = TabParent::GetFrom(browser);
@@ -1250,6 +1244,10 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
     parent->IsForApp(),
     parent->IsForBrowser());
 
+  if (aFreshProcess) {
+    Unused << browser->SendSetFreshProcess();
+  }
+
   if (browser) {
     RefPtr<TabParent> constructedTabParent = TabParent::GetFrom(browser);
     constructedTabParent->SetOwnerElement(aFrameElement);
@@ -1361,14 +1359,13 @@ ContentParent::Init()
   // If accessibility is running in chrome process then start it in content
   // process.
   if (nsIPresShell::IsAccessibilityActive()) {
-#if !defined(XP_WIN)
-    Unused << SendActivateA11y();
-#else
-    // On Windows we currently only enable a11y in the content process
-    // for testing purposes.
-    if (Preferences::GetBool(kForceEnableE10sPref, false)) {
-      Unused << SendActivateA11y();
+#if defined(XP_WIN)
+    if (IsVistaOrLater()) {
+      Unused <<
+        SendActivateA11y(a11y::AccessibleWrap::GetContentProcessIdFor(ChildID()));
     }
+#else
+    Unused << SendActivateA11y(0);
 #endif
   }
 #endif
@@ -1392,6 +1389,9 @@ ContentParent::Init()
     StartProfiler(currentProfilerParams);
   }
 #endif
+
+  RefPtr<GeckoMediaPluginServiceParent> gmps(GeckoMediaPluginServiceParent::GetSingleton());
+  gmps->UpdateContentProcessGMPCapabilities();
 }
 
 void
@@ -1612,11 +1612,21 @@ ContentParent::MarkAsDead()
         sAppContentParents = nullptr;
       }
     }
-  } else if (sNonAppContentParents) {
-    sNonAppContentParents->RemoveElement(this);
-    if (!sNonAppContentParents->Length()) {
-      delete sNonAppContentParents;
-      sNonAppContentParents = nullptr;
+  } else {
+    if (sNonAppContentParents) {
+      sNonAppContentParents->RemoveElement(this);
+      if (!sNonAppContentParents->Length()) {
+        delete sNonAppContentParents;
+        sNonAppContentParents = nullptr;
+      }
+    }
+
+    if (sLargeAllocationContentParents) {
+      sLargeAllocationContentParents->RemoveElement(this);
+      if (!sLargeAllocationContentParents->Length()) {
+        delete sLargeAllocationContentParents;
+        sLargeAllocationContentParents = nullptr;
+      }
     }
   }
 
@@ -1740,13 +1750,13 @@ ContentParent::RecvDeallocateLayerTreeId(const uint64_t& aId)
 {
   GPUProcessManager* gpu = GPUProcessManager::Get();
 
-  if (!gpu->IsLayerTreeIdMapped(aId, this->OtherPid()))
+  if (!gpu->IsLayerTreeIdMapped(aId, OtherPid()))
   {
     // You can't deallocate layer tree ids that you didn't allocate
     KillHard("DeallocateLayerTreeId");
   }
 
-  gpu->DeallocateLayerTreeId(aId);
+  gpu->UnmapLayerTreeId(aId, OtherPid());
 
   return true;
 }
@@ -1953,6 +1963,12 @@ ContentParent::NotifyTabDestroying(const TabId& aTabId,
         return;
     }
 
+    uint32_t numberOfParents = sNonAppContentParents ? sNonAppContentParents->Length() : 0;
+    int32_t processesToKeepAlive = Preferences::GetInt("dom.ipc.keepProcessesAlive", 0);
+    if (!cp->mLargeAllocationProcess && static_cast<int32_t>(numberOfParents) <= processesToKeepAlive) {
+      return;
+    }
+
     // We're dying now, so prevent this content process from being
     // recycled during its shutdown procedure.
     cp->MarkAsDead();
@@ -2001,7 +2017,15 @@ ContentParent::NotifyTabDestroyed(const TabId& aTabId,
   // us down.
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
   nsTArray<TabId> tabIds = cpm->GetTabParentsByProcessId(this->ChildID());
-  if (tabIds.Length() == 1) {
+
+  // We might want to keep alive some content processes for testing, because of performance
+  // reasons, but we don't want to alter behavior if the pref is not set.
+  uint32_t numberOfParents = sNonAppContentParents ? sNonAppContentParents->Length() : 0;
+  int32_t processesToKeepAlive = Preferences::GetInt("dom.ipc.keepProcessesAlive", 0);
+  bool shouldKeepAliveAny = !mLargeAllocationProcess && processesToKeepAlive > 0;
+  bool shouldKeepAliveThis = shouldKeepAliveAny && static_cast<int32_t>(numberOfParents) <= processesToKeepAlive;
+
+  if (tabIds.Length() == 1 && !shouldKeepAliveThis) {
     // In the case of normal shutdown, send a shutdown message to child to
     // allow it to perform shutdown tasks.
     MessageLoop::current()->PostTask(NewRunnableMethod
@@ -2092,6 +2116,7 @@ ContentParent::ContentParent(mozIApplication* aApp,
   : nsIContentParent()
   , mOpener(aOpener)
   , mIsForBrowser(aIsForBrowser)
+  , mLargeAllocationProcess(false)
 {
   InitializeMembers();  // Perform common initialization.
 
@@ -2141,8 +2166,10 @@ ContentParent::~ContentParent()
   // We should be removed from all these lists in ActorDestroy.
   MOZ_ASSERT(!sPrivateContent || !sPrivateContent->Contains(this));
   if (mAppManifestURL.IsEmpty()) {
-    MOZ_ASSERT(!sNonAppContentParents ||
-               !sNonAppContentParents->Contains(this));
+    MOZ_ASSERT((!sNonAppContentParents ||
+                !sNonAppContentParents->Contains(this)) &&
+               (!sLargeAllocationContentParents ||
+                !sLargeAllocationContentParents->Contains(this)));
   } else {
     // In general, we expect sAppContentParents->Get(mAppManifestURL) to be
     // nullptr.  But it could be that we created another ContentParent for
@@ -2220,10 +2247,6 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
 
       gpm->AddListener(this);
     }
-#ifdef MOZ_WIDGET_GONK
-    DebugOnly<bool> opened = PSharedBufferManager::Open(this);
-    MOZ_ASSERT(opened);
-#endif
   }
 
   if (gAppData) {
@@ -2792,14 +2815,13 @@ ContentParent::Observe(nsISupports* aSubject,
     if (*aData == '1') {
       // Make sure accessibility is running in content process when
       // accessibility gets initiated in chrome process.
-#if !defined(XP_WIN)
-      Unused << SendActivateA11y();
-#else
-      // On Windows we currently only enable a11y in the content process
-      // for testing purposes.
-      if (Preferences::GetBool(kForceEnableE10sPref, false)) {
-        Unused << SendActivateA11y();
+#if defined(XP_WIN)
+      if (IsVistaOrLater()) {
+        Unused <<
+          SendActivateA11y(a11y::AccessibleWrap::GetContentProcessIdFor(ChildID()));
       }
+#else
+      Unused << SendActivateA11y(0);
 #endif
     } else {
       // If possible, shut down accessibility in content process when
@@ -2808,9 +2830,6 @@ ContentParent::Observe(nsISupports* aSubject,
     }
   }
 #endif
-  else if (!strcmp(aTopic, "app-theme-changed")) {
-    Unused << SendOnAppThemeChanged();
-  }
 #ifdef MOZ_ENABLE_PROFILER_SPS
   else if (!strcmp(aTopic, "profiler-started")) {
     nsCOMPtr<nsIProfilerStartParams> params(do_QueryInterface(aSubject));
@@ -2856,13 +2875,6 @@ ContentParent::AllocPProcessHangMonitorParent(Transport* aTransport,
 {
   mHangMonitorActor = CreateHangMonitorParent(this, aTransport, aOtherProcess);
   return mHangMonitorActor;
-}
-
-PSharedBufferManagerParent*
-ContentParent::AllocPSharedBufferManagerParent(mozilla::ipc::Transport* aTransport,
-                                                base::ProcessId aOtherProcess)
-{
-  return SharedBufferManagerParent::Create(aTransport, aOtherProcess);
 }
 
 bool
@@ -3441,69 +3453,6 @@ ContentParent::DeallocPHandlerServiceParent(PHandlerServiceParent* aHandlerServi
   return true;
 }
 
-PSmsParent*
-ContentParent::AllocPSmsParent()
-{
-  if (!AssertAppProcessPermission(this, "sms")) {
-    return nullptr;
-  }
-
-  SmsParent* parent = new SmsParent();
-  parent->AddRef();
-  return parent;
-}
-
-bool
-ContentParent::DeallocPSmsParent(PSmsParent* aSms)
-{
-  static_cast<SmsParent*>(aSms)->Release();
-  return true;
-}
-
-PTelephonyParent*
-ContentParent::AllocPTelephonyParent()
-{
-  if (!AssertAppProcessPermission(this, "telephony")) {
-    return nullptr;
-  }
-
-  TelephonyParent* actor = new TelephonyParent();
-  NS_ADDREF(actor);
-  return actor;
-}
-
-bool
-ContentParent::DeallocPTelephonyParent(PTelephonyParent* aActor)
-{
-  static_cast<TelephonyParent*>(aActor)->Release();
-  return true;
-}
-
-PVoicemailParent*
-ContentParent::AllocPVoicemailParent()
-{
-  if (!AssertAppProcessPermission(this, "voicemail")) {
-    return nullptr;
-  }
-
-  VoicemailParent* actor = new VoicemailParent();
-  actor->AddRef();
-  return actor;
-}
-
-bool
-ContentParent::RecvPVoicemailConstructor(PVoicemailParent* aActor)
-{
-  return static_cast<VoicemailParent*>(aActor)->Init();
-}
-
-bool
-ContentParent::DeallocPVoicemailParent(PVoicemailParent* aActor)
-{
-  static_cast<VoicemailParent*>(aActor)->Release();
-  return true;
-}
-
 media::PMediaParent*
 ContentParent::AllocPMediaParent()
 {
@@ -3528,43 +3477,6 @@ ContentParent::DeallocPStorageParent(PStorageParent* aActor)
   DOMStorageDBParent* child = static_cast<DOMStorageDBParent*>(aActor);
   child->ReleaseIPDLReference();
   return true;
-}
-
-PBluetoothParent*
-ContentParent::AllocPBluetoothParent()
-{
-#ifdef MOZ_B2G_BT
-  if (!AssertAppProcessPermission(this, "bluetooth")) {
-  return nullptr;
-  }
-  return new mozilla::dom::bluetooth::BluetoothParent();
-#else
-  MOZ_CRASH("No support for bluetooth on this platform!");
-#endif
-}
-
-bool
-ContentParent::DeallocPBluetoothParent(PBluetoothParent* aActor)
-{
-#ifdef MOZ_B2G_BT
-  delete aActor;
-  return true;
-#else
-  MOZ_CRASH("No support for bluetooth on this platform!");
-#endif
-}
-
-bool
-ContentParent::RecvPBluetoothConstructor(PBluetoothParent* aActor)
-{
-#ifdef MOZ_B2G_BT
-  RefPtr<BluetoothService> btService = BluetoothService::Get();
-  NS_ENSURE_TRUE(btService, false);
-
-  return static_cast<BluetoothParent*>(aActor)->InitWithService(btService);
-#else
-  MOZ_CRASH("No support for bluetooth on this platform!");
-#endif
 }
 
 PPresentationParent*
@@ -4003,7 +3915,7 @@ AddGeolocationListener(nsIDOMGeoPositionCallback* watcher,
     return -1;
   }
 
-  nsAutoPtr<PositionOptions> options(new PositionOptions());
+  UniquePtr<PositionOptions> options = MakeUnique<PositionOptions>();
   options->mTimeout = 0;
   options->mMaximumAge = 0;
   options->mEnableHighAccuracy = highAccuracy;
@@ -4723,7 +4635,7 @@ ContentParent::MaybeInvokeDragSession(TabParent* aParent)
       transfer->FillAllExternalData();
       nsCOMPtr<nsILoadContext> lc = aParent ?
                                      aParent->GetLoadContext() : nullptr;
-      nsCOMPtr<nsISupportsArray> transferables =
+      nsCOMPtr<nsIArray> transferables =
         transfer->GetTransferables(lc);
       nsContentUtils::TransferablesToIPCTransferables(transferables,
                                                       dataTransfers,
@@ -5330,7 +5242,7 @@ bool
 ContentParent::RecvAccumulateChildHistogram(
                 InfallibleTArray<Accumulation>&& aAccumulations)
 {
-  Telemetry::AccumulateChild(aAccumulations);
+  Telemetry::AccumulateChild(GeckoProcessType_Content, aAccumulations);
   return true;
 }
 
@@ -5338,6 +5250,6 @@ bool
 ContentParent::RecvAccumulateChildKeyedHistogram(
                 InfallibleTArray<KeyedAccumulation>&& aAccumulations)
 {
-  Telemetry::AccumulateChildKeyed(aAccumulations);
+  Telemetry::AccumulateChildKeyed(GeckoProcessType_Content, aAccumulations);
   return true;
 }

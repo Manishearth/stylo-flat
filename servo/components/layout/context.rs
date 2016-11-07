@@ -7,23 +7,21 @@
 // for thread_local
 #![allow(unsafe_code)]
 
-use app_units::Au;
-use euclid::Rect;
 use fnv::FnvHasher;
 use gfx::display_list::WebRenderImageInfo;
 use gfx::font_cache_thread::FontCacheThread;
 use gfx::font_context::FontContext;
-use gfx_traits::LayerId;
 use heapsize::HeapSizeOf;
-use ipc_channel::ipc::{self, IpcSharedMemory};
+use ipc_channel::ipc;
 use net_traits::image::base::Image;
 use net_traits::image_cache_thread::{ImageCacheChan, ImageCacheThread, ImageResponse, ImageState};
 use net_traits::image_cache_thread::{ImageOrMetadataAvailable, UsePlaceholder};
+use parking_lot::RwLock;
 use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use style::context::{LocalStyleContext, StyleContext, SharedStyleContext};
 use url::Url;
 use util::opts;
@@ -86,9 +84,6 @@ pub struct SharedLayoutContext {
 
     /// Interface to the font cache thread.
     pub font_cache_thread: Mutex<FontCacheThread>,
-
-    /// The visible rects for each layer, as reported to us by the compositor.
-    pub visible_rects: Arc<HashMap<LayerId, Rect<Au>, BuildHasherDefault<FnvHasher>>>,
 
     /// A cache of WebRender image info.
     pub webrender_image_cache: Arc<RwLock<HashMap<(Url, UsePlaceholder),
@@ -196,36 +191,24 @@ impl SharedLayoutContext {
 
     pub fn get_webrender_image_for_url(&self,
                                        url: &Url,
-                                       use_placeholder: UsePlaceholder,
-                                       fetch_image_data_as_well: bool)
-                                       -> Option<(WebRenderImageInfo, Option<IpcSharedMemory>)> {
-        if !fetch_image_data_as_well {
-            let webrender_image_cache = self.webrender_image_cache.read().unwrap();
-            if let Some(existing_webrender_image) =
-                    webrender_image_cache.get(&((*url).clone(), use_placeholder)) {
-                return Some(((*existing_webrender_image).clone(), None))
-            }
+                                       use_placeholder: UsePlaceholder)
+                                       -> Option<WebRenderImageInfo> {
+        if let Some(existing_webrender_image) = self.webrender_image_cache
+                                                    .read()
+                                                    .get(&((*url).clone(), use_placeholder)) {
+            return Some((*existing_webrender_image).clone())
         }
 
         match self.get_or_request_image_or_meta((*url).clone(), use_placeholder) {
             Some(ImageOrMetadataAvailable::ImageAvailable(image)) => {
                 let image_info = WebRenderImageInfo::from_image(&*image);
                 if image_info.key.is_none() {
-                    let bytes = if !fetch_image_data_as_well {
-                        None
-                    } else {
-                        Some(image.bytes.clone())
-                    };
-                    Some((image_info, bytes))
-                } else if !fetch_image_data_as_well {
-                    let mut webrender_image_cache = self.webrender_image_cache
-                                                        .write()
-                                                        .unwrap();
+                    Some(image_info)
+                } else {
+                    let mut webrender_image_cache = self.webrender_image_cache.write();
                     webrender_image_cache.insert(((*url).clone(), use_placeholder),
                                                  image_info);
-                    Some((image_info, None))
-                } else {
-                    Some((image_info, Some(image.bytes.clone())))
+                    Some(image_info)
                 }
             }
             None | Some(ImageOrMetadataAvailable::MetadataAvailable(_)) => None,

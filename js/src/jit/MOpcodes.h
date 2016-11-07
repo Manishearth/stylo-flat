@@ -46,6 +46,7 @@ namespace jit {
     _(Compare)                                                              \
     _(Phi)                                                                  \
     _(Beta)                                                                 \
+    _(NaNToZero)                                                            \
     _(OsrValue)                                                             \
     _(OsrEnvironmentChain)                                                  \
     _(OsrReturnValue)                                                       \
@@ -189,7 +190,7 @@ namespace jit {
     _(LoadUnboxedExpando)                                                   \
     _(ArrayLength)                                                          \
     _(SetArrayLength)                                                       \
-    _(GetNextMapEntryForIterator)                                           \
+    _(GetNextEntryForIterator)                                              \
     _(TypedArrayLength)                                                     \
     _(TypedArrayElements)                                                   \
     _(SetDisjointTypedElements)                                             \

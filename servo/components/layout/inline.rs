@@ -7,8 +7,7 @@
 use app_units::Au;
 use block::AbsoluteAssignBSizesTraversal;
 use context::{LayoutContext, SharedLayoutContext};
-use display_list_builder::{FragmentDisplayListBuilding, InlineFlowDisplayListBuilding};
-use display_list_builder::DisplayListBuildState;
+use display_list_builder::{DisplayListBuildState, InlineFlowDisplayListBuilding};
 use euclid::{Point2D, Size2D};
 use floats::{FloatKind, Floats, PlacementInfo};
 use flow::{self, BaseFlow, Flow, FlowClass, ForceNonfloatedFlag, IS_ABSOLUTELY_POSITIONED};
@@ -20,6 +19,7 @@ use fragment::SpecificFragmentInfo;
 use gfx::display_list::{OpaqueNode, StackingContext};
 use gfx::font::FontMetrics;
 use gfx::font_context::FontContext;
+use gfx_traits::ScrollRootId;
 use gfx_traits::print_tree::PrintTree;
 use layout_debug;
 use model::IntrinsicISizesContribution;
@@ -1547,15 +1547,11 @@ impl Flow for InlineFlow {
                                                       CoordinateSystem::Parent);
             let stacking_relative_content_box =
                 fragment.stacking_relative_content_box(&stacking_relative_border_box);
-            let mut clip = self.base.clip.clone();
-            fragment.adjust_clipping_region_for_children(&mut clip,
-                                                         &stacking_relative_border_box);
+
             let is_positioned = fragment.is_positioned();
             match fragment.specific {
                 SpecificFragmentInfo::InlineBlock(ref mut info) => {
                     let flow = flow_ref::deref_mut(&mut info.flow_ref);
-                    flow::mut_base(flow).clip = clip;
-
                     let block_flow = flow.as_mut_block();
                     block_flow.base.late_absolute_position_info =
                         self.base.late_absolute_position_info;
@@ -1571,25 +1567,25 @@ impl Flow for InlineFlow {
 
                     block_flow.base.stacking_relative_position =
                         stacking_relative_content_box.origin;
-                    block_flow.base.stacking_relative_position_of_display_port =
-                        self.base.stacking_relative_position_of_display_port;
+
+                    // Write the clip in our coordinate system into the child flow. (The kid will
+                    // fix it up to be in its own coordinate system if necessary.)
+                    block_flow.base.clip = self.base.clip.clone()
                 }
                 SpecificFragmentInfo::InlineAbsoluteHypothetical(ref mut info) => {
                     let flow = flow_ref::deref_mut(&mut info.flow_ref);
-                    flow::mut_base(flow).clip = clip;
                     let block_flow = flow.as_mut_block();
                     block_flow.base.late_absolute_position_info =
                         self.base.late_absolute_position_info;
 
                     block_flow.base.stacking_relative_position =
                         stacking_relative_border_box.origin;
-                    block_flow.base.stacking_relative_position_of_display_port =
-                        self.base.stacking_relative_position_of_display_port;
+
+                    // As above, this is in our coordinate system for now.
+                    block_flow.base.clip = self.base.clip.clone()
                 }
                 SpecificFragmentInfo::InlineAbsolute(ref mut info) => {
                     let flow = flow_ref::deref_mut(&mut info.flow_ref);
-                    flow::mut_base(flow).clip = clip;
-
                     let block_flow = flow.as_mut_block();
                     block_flow.base.late_absolute_position_info =
                         self.base.late_absolute_position_info;
@@ -1603,8 +1599,9 @@ impl Flow for InlineFlow {
 
                     block_flow.base.stacking_relative_position =
                         stacking_relative_border_box.origin;
-                    block_flow.base.stacking_relative_position_of_display_port =
-                        self.base.stacking_relative_position_of_display_port;
+
+                    // As above, this is in our coordinate system for now.
+                    block_flow.base.clip = self.base.clip.clone()
                 }
                 _ => {}
             }
@@ -1617,8 +1614,10 @@ impl Flow for InlineFlow {
 
     fn update_late_computed_block_position_if_necessary(&mut self, _: Au) {}
 
-    fn collect_stacking_contexts(&mut self, parent: &mut StackingContext) {
-        self.collect_stacking_contexts_for_inline(parent);
+    fn collect_stacking_contexts(&mut self,
+                                 parent: &mut StackingContext,
+                                 parent_scroll_root_id: ScrollRootId) {
+        self.collect_stacking_contexts_for_inline(parent, parent_scroll_root_id);
     }
 
     fn build_display_list(&mut self, state: &mut DisplayListBuildState) {

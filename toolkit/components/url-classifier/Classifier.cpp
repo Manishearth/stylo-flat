@@ -18,6 +18,8 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/Logging.h"
 #include "mozilla/SyncRunnable.h"
+#include "mozilla/Base64.h"
+#include "mozilla/Unused.h"
 
 // MOZ_LOG=UrlClassifierDbService:5
 extern mozilla::LazyLogModule gUrlClassifierDbServiceLog;
@@ -27,6 +29,8 @@ extern mozilla::LazyLogModule gUrlClassifierDbServiceLog;
 #define STORE_DIRECTORY      NS_LITERAL_CSTRING("safebrowsing")
 #define TO_DELETE_DIR_SUFFIX NS_LITERAL_CSTRING("-to_delete")
 #define BACKUP_DIR_SUFFIX    NS_LITERAL_CSTRING("-backup")
+
+#define METADATA_SUFFIX      NS_LITERAL_CSTRING(".metadata")
 
 namespace mozilla {
 namespace safebrowsing {
@@ -346,22 +350,36 @@ Classifier::Reset()
 }
 
 void
-Classifier::ResetTables(const nsTArray<nsCString>& aTables)
+Classifier::ResetTables(ClearType aType, const nsTArray<nsCString>& aTables)
 {
-  // Clear lookup cache
-  MarkSpoiled(aTables);
+  for (uint32_t i = 0; i < aTables.Length(); i++) {
+    LOG(("Resetting table: %s", aTables[i].get()));
+    // Spoil this table by marking it as no known freshness
+    mTableFreshness.Remove(aTables[i]);
+    LookupCache *cache = GetLookupCache(aTables[i]);
+    if (cache) {
+      // Remove any cached Completes for this table if clear type is Clear_Cache
+      if (aType == Clear_Cache) {
+        cache->ClearCache();
+      } else {
+        cache->ClearAll();
+      }
+    }
+  }
 
-  // Clear on-disk database
-  DeleteTables(aTables);
+  // Clear on-disk database if clear type is Clear_All
+  if (aType == Clear_All) {
+    DeleteTables(mRootStoreDirectory, aTables);
 
-  RegenActiveTables();
+    RegenActiveTables();
+  }
 }
 
 void
-Classifier::DeleteTables(const nsTArray<nsCString>& aTables)
+Classifier::DeleteTables(nsIFile* aDirectory, const nsTArray<nsCString>& aTables)
 {
   nsCOMPtr<nsISimpleEnumerator> entries;
-  nsresult rv = mRootStoreDirectory->GetDirectoryEntries(getter_AddRefs(entries));
+  nsresult rv = aDirectory->GetDirectoryEntries(getter_AddRefs(entries));
   NS_ENSURE_SUCCESS_VOID(rv);
 
   bool hasMore;
@@ -372,6 +390,16 @@ Classifier::DeleteTables(const nsTArray<nsCString>& aTables)
 
     nsCOMPtr<nsIFile> file = do_QueryInterface(supports);
     NS_ENSURE_TRUE_VOID(file);
+
+    // If |file| is a directory, recurse to find its entries as well.
+    bool isDirectory;
+    if (NS_FAILED(file->IsDirectory(&isDirectory))) {
+      continue;
+    }
+    if (isDirectory) {
+      DeleteTables(file, aTables);
+      continue;
+    }
 
     nsCString leafName;
     rv = file->GetNativeLeafName(leafName);
@@ -389,8 +417,23 @@ Classifier::DeleteTables(const nsTArray<nsCString>& aTables)
 }
 
 void
+Classifier::AbortUpdateAndReset(const nsCString& aTable)
+{
+  LOG(("Abort updating table %s.", aTable.get()));
+
+  // ResetTables will clear both in-memory & on-disk data.
+  ResetTables(Clear_All, nsTArray<nsCString> { aTable });
+
+  // Remove the backup and delete directory since we are aborting
+  // from an update.
+  Unused << RemoveBackupTables();
+  Unused << CleanToDelete();
+}
+
+void
 Classifier::TableRequest(nsACString& aResult)
 {
+  // Generating v2 table info.
   nsTArray<nsCString> tables;
   ActiveTables(tables);
   for (uint32_t i = 0; i < tables.Length(); i++) {
@@ -424,6 +467,13 @@ Classifier::TableRequest(nsACString& aResult)
 
     aResult.Append('\n');
   }
+
+  // Load meta data from *.metadata files in the root directory.
+  // Specifically for v4 tables.
+  nsCString metadata;
+  nsresult rv = LoadMetadata(mRootStoreDirectory, metadata);
+  NS_ENSURE_SUCCESS_VOID(rv);
+  aResult.Append(metadata);
 }
 
 nsresult
@@ -539,7 +589,7 @@ Classifier::ApplyUpdates(nsTArray<TableUpdate*>* aUpdates)
 
         if (NS_FAILED(rv)) {
           if (rv != NS_ERROR_OUT_OF_MEMORY) {
-            Reset();
+            AbortUpdateAndReset(updateTable);
           }
           return rv;
         }
@@ -588,22 +638,6 @@ Classifier::ApplyFullHashes(nsTArray<TableUpdate*>* aUpdates)
     aUpdates->ElementAt(i) = nullptr;
   }
 
-  return NS_OK;
-}
-
-nsresult
-Classifier::MarkSpoiled(const nsTArray<nsCString>& aTables)
-{
-  for (uint32_t i = 0; i < aTables.Length(); i++) {
-    LOG(("Spoiling table: %s", aTables[i].get()));
-    // Spoil this table by marking it as no known freshness
-    mTableFreshness.Remove(aTables[i]);
-    // Remove any cached Completes for this table
-    LookupCache *cache = GetLookupCache(aTables[i]);
-    if (cache) {
-      cache->ClearCache();
-    }
-  }
   return NS_OK;
 }
 
@@ -949,12 +983,13 @@ Classifier::UpdateTableV4(nsTArray<TableUpdate*>* aUpdates,
 
   nsresult rv = NS_OK;
 
-  // prefixes2 is only used in partial update. If there are multiple
-  // updates for the same table, prefixes1 & prefixes2 will act as
-  // input and output in turn to reduce memory copy overhead.
+  // If there are multiple updates for the same table, prefixes1 & prefixes2
+  // will act as input and output in turn to reduce memory copy overhead.
   PrefixStringMap prefixes1, prefixes2;
-  PrefixStringMap* output = &prefixes1;
+  PrefixStringMap* input = &prefixes1;
+  PrefixStringMap* output = &prefixes2;
 
+  TableUpdateV4* lastAppliedUpdate = nullptr;
   for (uint32_t i = 0; i < aUpdates->Length(); i++) {
     TableUpdate *update = aUpdates->ElementAt(i);
     if (!update || !update->TableName().Equals(aTable)) {
@@ -965,24 +1000,18 @@ Classifier::UpdateTableV4(nsTArray<TableUpdate*>* aUpdates,
     NS_ENSURE_TRUE(updateV4, NS_ERROR_FAILURE);
 
     if (updateV4->IsFullUpdate()) {
-      TableUpdateV4::PrefixStdStringMap& map = updateV4->Prefixes();
-
+      input->Clear();
       output->Clear();
-      for (auto iter = map.Iter(); !iter.Done(); iter.Next()) {
-        // prefixes is an nsClassHashtable object stores prefix string.
-        // It will take the ownership of the put object.
-        nsCString* prefix = new nsCString(iter.Data()->GetPrefixString());
-        output->Put(iter.Key(), prefix);
+      rv = lookupCache->ApplyUpdate(updateV4, *input, *output);
+      if (NS_FAILED(rv)) {
+        return rv;
       }
     } else {
-      PrefixStringMap* input = nullptr;
       // If both prefix sets are empty, this means we are doing a partial update
       // without a prior full/partial update in the loop. In this case we should
       // get prefixes from the lookup cache first.
       if (prefixes1.IsEmpty() && prefixes2.IsEmpty()) {
         lookupCache->GetPrefixes(prefixes1);
-        input = &prefixes1;
-        output = &prefixes2;
       } else {
         MOZ_ASSERT(prefixes1.IsEmpty() ^ prefixes2.IsEmpty());
 
@@ -993,11 +1022,16 @@ Classifier::UpdateTableV4(nsTArray<TableUpdate*>* aUpdates,
         output = prefixes1.IsEmpty() ? &prefixes1 : &prefixes2;
       }
 
-      rv = lookupCache->ApplyPartialUpdate(updateV4, *input, *output);
-      NS_ENSURE_SUCCESS(rv, rv);
+      rv = lookupCache->ApplyUpdate(updateV4, *input, *output);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
 
       input->Clear();
     }
+
+    // Keep track of the last applied update.
+    lastAppliedUpdate = updateV4;
 
     aUpdates->ElementAt(i) = nullptr;
   }
@@ -1007,6 +1041,13 @@ Classifier::UpdateTableV4(nsTArray<TableUpdate*>* aUpdates,
 
   rv = lookupCache->WriteFile();
   NS_ENSURE_SUCCESS(rv, rv);
+
+  if (lastAppliedUpdate) {
+    LOG(("Write meta data of the last applied update."));
+    rv = lookupCache->WriteMetadata(lastAppliedUpdate);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
 
   int64_t now = (PR_Now() / PR_USEC_PER_SEC);
   LOG(("Successfully updated %s\n", PromiseFlatCString(aTable).get()));
@@ -1108,6 +1149,77 @@ Classifier::ReadNoiseEntries(const Prefix& aPrefix,
   }
 
   return NS_OK;
+}
+
+nsresult
+Classifier::LoadMetadata(nsIFile* aDirectory, nsACString& aResult)
+{
+  nsCOMPtr<nsISimpleEnumerator> entries;
+  nsresult rv = aDirectory->GetDirectoryEntries(getter_AddRefs(entries));
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_ARG_POINTER(entries);
+
+  bool hasMore;
+  while (NS_SUCCEEDED(rv = entries->HasMoreElements(&hasMore)) && hasMore) {
+    nsCOMPtr<nsISupports> supports;
+    rv = entries->GetNext(getter_AddRefs(supports));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIFile> file = do_QueryInterface(supports);
+
+    // If |file| is a directory, recurse to find its entries as well.
+    bool isDirectory;
+    if (NS_FAILED(file->IsDirectory(&isDirectory))) {
+      continue;
+    }
+    if (isDirectory) {
+      LoadMetadata(file, aResult);
+      continue;
+    }
+
+    // Truncate file extension to get the table name.
+    nsCString tableName;
+    rv = file->GetNativeLeafName(tableName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    int32_t dot = tableName.RFind(METADATA_SUFFIX, 0);
+    if (dot == -1) {
+      continue;
+    }
+    tableName.Cut(dot, METADATA_SUFFIX.Length());
+
+    LookupCacheV4* lookupCache =
+      LookupCache::Cast<LookupCacheV4>(GetLookupCache(tableName));
+    if (!lookupCache) {
+      continue;
+    }
+
+    nsCString state;
+    nsCString checksum;
+    rv = lookupCache->LoadMetadata(state, checksum);
+    if (NS_FAILED(rv)) {
+      LOG(("Failed to get metadata for table %s", tableName.get()));
+      continue;
+    }
+
+    // The state might include '\n' so that we have to encode.
+    nsAutoCString stateBase64;
+    rv = Base64Encode(state, stateBase64);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsAutoCString checksumBase64;
+    rv = Base64Encode(checksum, checksumBase64);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    LOG(("Appending state '%s' and checksum '%s' for table %s",
+         stateBase64.get(), checksumBase64.get(), tableName.get()));
+
+    aResult.AppendPrintf("%s;%s:%s\n", tableName.get(),
+                                       stateBase64.get(),
+                                       checksumBase64.get());
+  }
+
+  return rv;
 }
 
 } // namespace safebrowsing

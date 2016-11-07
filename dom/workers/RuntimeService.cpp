@@ -2723,12 +2723,6 @@ RuntimeService::Observe(nsISupports* aSubject, const char* aTopic,
     SendOfflineStatusChangeEventToAllWorkers(NS_IsOffline());
     return NS_OK;
   }
-  if (!strcmp(aTopic, NS_IOSERVICE_APP_OFFLINE_STATUS_TOPIC)) {
-    BROADCAST_ALL_WORKERS(OfflineStatusChangeEvent,
-                          NS_IsOffline() ||
-                          NS_IsAppOffline(workers[index]->GetPrincipal()));
-    return NS_OK;
-  }
 
   NS_NOTREACHED("Unknown observer topic!");
   return NS_OK;
@@ -2814,7 +2808,8 @@ WorkerThreadPrimaryRunnable::Run()
   //       worker messages here.
   if (NS_WARN_IF(!BackgroundChild::SynchronouslyCreateForCurrentThread())) {
     // XXX need to fire an error at parent.
-    return NS_ERROR_UNEXPECTED;
+    // Failed in creating BackgroundChild: probably in shutdown. Continue to run
+    // without BackgroundChild created.
   }
 
   class MOZ_STACK_CLASS SetThreadHelper final

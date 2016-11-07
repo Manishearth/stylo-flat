@@ -23,6 +23,7 @@
 #include "nsScriptSecurityManager.h"
 #include "nsServiceManagerUtils.h"
 
+#include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/CSPDictionariesBinding.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/dom/ToJSValue.h"
@@ -395,6 +396,16 @@ bool
 BasePrincipal::Subsumes(nsIPrincipal* aOther, DocumentDomainConsideration aConsideration)
 {
   MOZ_ASSERT(aOther);
+
+  // Expanded principals handle origin attributes for each of their
+  // sub-principals individually, null principals do only simple checks for
+  // pointer equality, and system principals are immune to origin attributes
+  // checks, so only do this check for codebase principals.
+  if (Kind() == eCodebasePrincipal &&
+      OriginAttributesRef() != Cast(aOther)->OriginAttributesRef()) {
+    return false;
+  }
+
   return SubsumesInternal(aOther, aConsideration);
 }
 
@@ -414,6 +425,22 @@ BasePrincipal::EqualsConsideringDomain(nsIPrincipal *aOther, bool *aResult)
   *aResult = Subsumes(aOther, ConsiderDocumentDomain) &&
              Cast(aOther)->Subsumes(this, ConsiderDocumentDomain);
   return NS_OK;
+}
+
+bool
+BasePrincipal::EqualsIgnoringAddonId(nsIPrincipal *aOther)
+{
+  MOZ_ASSERT(aOther);
+
+  // Note that this will not work for expanded principals, nor is it intended
+  // to.
+  if (!dom::ChromeUtils::IsOriginAttributesEqualIgnoringAddonId(
+          OriginAttributesRef(), Cast(aOther)->OriginAttributesRef())) {
+    return false;
+  }
+
+  return SubsumesInternal(aOther, DontConsiderDocumentDomain) &&
+         Cast(aOther)->SubsumesInternal(this, DontConsiderDocumentDomain);
 }
 
 NS_IMETHODIMP
@@ -568,13 +595,6 @@ NS_IMETHODIMP
 BasePrincipal::GetIsSystemPrincipal(bool* aResult)
 {
   *aResult = Kind() == eSystemPrincipal;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-BasePrincipal::GetJarPrefix(nsACString& aJarPrefix)
-{
-  mozilla::GetJarPrefix(mOriginAttributes.mAppId, mOriginAttributes.mInIsolatedMozBrowser, aJarPrefix);
   return NS_OK;
 }
 

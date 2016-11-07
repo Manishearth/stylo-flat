@@ -3,12 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #![cfg(test)]
-#![feature(plugin)]
 #![feature(core_intrinsics)]
+#![feature(plugin)]
 
 extern crate app_units;
 extern crate cssparser;
 extern crate euclid;
+extern crate owning_ref;
 extern crate parking_lot;
 extern crate rustc_serialize;
 extern crate selectors;
@@ -18,10 +19,12 @@ extern crate style_traits;
 extern crate url;
 extern crate util;
 
+mod atomic_refcell;
 mod attr;
 mod cache;
 mod logical_geometry;
 mod media_queries;
+mod owning_handle;
 mod parsing;
 mod properties;
 mod selector_matching;

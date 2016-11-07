@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #![feature(custom_attribute, custom_derive, plugin, proc_macro, rustc_attrs, structural_match)]
-#![plugin(heapsize_plugin, plugins)]
+#![plugin(plugins)]
 
 #![deny(unsafe_code)]
 
@@ -11,13 +11,10 @@
 #[macro_use]
 extern crate bitflags;
 extern crate heapsize;
-extern crate hyper;
-extern crate hyper_serde;
-extern crate ipc_channel;
+#[macro_use] extern crate heapsize_derive;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
-extern crate url;
 extern crate webrender_traits;
 
 pub mod constellation_msg;

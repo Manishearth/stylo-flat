@@ -13,7 +13,6 @@
 #include "mozilla/net/PHttpChannelParent.h"
 #include "mozilla/net/NeckoCommon.h"
 #include "mozilla/net/NeckoParent.h"
-#include "OfflineObserver.h"
 #include "nsIObserver.h"
 #include "nsIParentRedirectingChannel.h"
 #include "nsIProgressEventSink.h"
@@ -52,7 +51,6 @@ class HttpChannelParent final : public nsIInterfaceRequestor
                               , public ADivertableParentChannel
                               , public nsIAuthPromptProvider
                               , public nsIDeprecationWarner
-                              , public DisconnectableParent
                               , public HttpChannelSecurityWarningReporter
 {
   virtual ~HttpChannelParent();
@@ -100,6 +98,7 @@ public:
 
   nsresult OpenAlternativeOutputStream(const nsACString & type, nsIOutputStream * *_retval);
 
+  void InvokeAsyncOpen(nsresult rv);
 protected:
   // used to connect redirected-to channel in parent with just created
   // ChildChannel.  Used during redirects.
@@ -115,7 +114,7 @@ protected:
                    const uint32_t&            loadFlags,
                    const RequestHeaderTuples& requestHeaders,
                    const nsCString&           requestMethod,
-                   const OptionalInputStreamParams& uploadStream,
+                   const OptionalIPCStream&   uploadStream,
                    const bool&                uploadStreamHasHeaders,
                    const uint16_t&            priority,
                    const uint32_t&            classOfService,
@@ -130,7 +129,6 @@ protected:
                    const nsCString&           appCacheClientID,
                    const bool&                allowSpdy,
                    const bool&                allowAltSvc,
-                   const OptionalFileDescriptorSet& aFds,
                    const OptionalLoadInfoArgs& aLoadInfoArgs,
                    const OptionalHttpResponseHead& aSynthesizedResponseHead,
                    const nsCString&           aSecurityInfoSerialization,
@@ -157,7 +155,8 @@ protected:
                                    const OptionalURIParams& apiRedirectUri,
                                    const OptionalCorsPreflightArgs& aCorsPreflightArgs,
                                    const bool& aForceHSTSPriming,
-                                   const bool& aMixedContentWouldBlock) override;
+                                   const bool& aMixedContentWouldBlock,
+                                   const bool& aChooseAppcache) override;
   virtual bool RecvUpdateAssociatedContentSecurity(const int32_t& broken,
                                                    const int32_t& no) override;
   virtual bool RecvDocumentChannelCleanup() override;
@@ -180,15 +179,15 @@ protected:
   friend class HttpChannelParentListener;
   RefPtr<mozilla::dom::TabParent> mTabParent;
 
-  void OfflineDisconnect() override;
-  uint32_t GetAppId() override;
-
   nsresult ReportSecurityMessage(const nsAString& aMessageTag,
                                  const nsAString& aMessageCategory) override;
 
   // Calls SendDeleteSelf and sets mIPCClosed to true because we should not
   // send any more messages after that. Bug 1274886
   bool DoSendDeleteSelf();
+  // Called to notify the parent channel to not send any more IPC messages.
+  virtual bool RecvDeletingChannel() override;
+  virtual bool RecvFinishInterceptedRedirect() override;
 
 private:
   void UpdateAndSerializeSecurityInfo(nsACString& aSerializedSecurityInfoOut);
@@ -224,8 +223,6 @@ private:
   bool mSentRedirect1Begin          : 1;
   bool mSentRedirect1BeginFailed    : 1;
   bool mReceivedRedirect2Verify     : 1;
-
-  RefPtr<OfflineObserver> mObserver;
 
   PBOverrideStatus mPBOverride;
 

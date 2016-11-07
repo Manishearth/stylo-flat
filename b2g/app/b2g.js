@@ -390,9 +390,6 @@ pref("dom.ipc.browser_frames.oop_by_default", false);
 pref("dom.meta-viewport.enabled", true);
 #endif
 
-// SMS/MMS
-pref("dom.sms.enabled", true);
-
 //The waiting time in network manager.
 pref("network.gonk.ms-release-mms-connection", 30000);
 
@@ -408,11 +405,6 @@ pref("dom.phonenumber.substringmatching.PE", 7);
 #ifdef MOZ_WIDGET_GONK
 pref("dom.mozNetworkStats.enabled", true);
 pref("dom.webapps.firstRunWithSIM", true);
-#endif
-
-// ResourceStats
-#ifdef MOZ_WIDGET_GONK
-pref("dom.resource_stats.enabled", true);
 #endif
 
 #ifdef MOZ_B2G_RIL
@@ -542,7 +534,6 @@ pref("dom.webapps.useCurrentProfile", true);
 // Enable system message
 pref("dom.sysmsg.enabled", true);
 pref("media.plugins.enabled", false);
-pref("media.omx.enabled", true);
 pref("media.rtsp.enabled", true);
 pref("media.rtsp.video.enabled", true);
 
@@ -876,18 +867,6 @@ pref("gfx.screen-mirroring.enabled", true);
 // The url of the page used to display network error details.
 pref("b2g.neterror.url", "net_error.html");
 
-// The origin used for the shared themes uri space.
-pref("b2g.theme.origin", "app://theme.gaiamobile.org");
-pref("dom.mozApps.themable", true);
-pref("dom.mozApps.selected_theme", "default_theme.gaiamobile.org");
-
-// Enable PAC generator for B2G.
-pref("network.proxy.pac_generator", true);
-
-// List of app origins to apply browsing traffic proxy setting, separated by
-// comma.  Specify '*' in the list to apply to all apps.
-pref("network.proxy.browsing.app_origins", "app://system.gaiamobile.org");
-
 // Enable Web Speech synthesis API
 pref("media.webspeech.synth.enabled", true);
 
@@ -943,7 +922,6 @@ pref("browser.autofocus", false);
 pref("dom.wakelock.enabled", true);
 
 // Enable webapps add-ons
-pref("dom.apps.customization.enabled", true);
 pref("dom.apps.reviewer_paths", "/reviewers/,/extension/reviewers/");
 
 // New implementation to unify touch-caret and selection-carets.
@@ -1021,13 +999,6 @@ pref("layers.compositor-lru-size", 10);
 
 // In B2G by deafult any AudioChannelAgent is muted when created.
 pref("dom.audiochannel.mutedByDefault", true);
-
-// The app origin of bluetooth app, which is responsible for listening pairing
-// requests.
-pref("dom.bluetooth.app-origin", "app://bluetooth.gaiamobile.org");
-
-// Enable W3C WebBluetooth API and disable B2G only GATT client API.
-pref("dom.bluetooth.webbluetooth.enabled", false);
 
 // Default device name for Presentation API
 pref("dom.presentation.device.name", "Firefox OS");

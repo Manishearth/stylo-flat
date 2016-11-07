@@ -306,9 +306,8 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     void pushValue(const Value& val) {
         vixl::UseScratchRegisterScope temps(this);
         const Register scratch = temps.AcquireX().asUnsized();
-        jsval_layout jv = JSVAL_TO_IMPL(val);
         if (val.isMarkable()) {
-            BufferOffset load = movePatchablePtr(ImmPtr((void*)jv.asBits), scratch);
+            BufferOffset load = movePatchablePtr(ImmPtr(val.bitsAsPunboxPointer()), scratch);
             writeDataRelocation(val, load);
             push(scratch);
         } else {
@@ -351,7 +350,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     }
     void moveValue(const Value& val, Register dest) {
         if (val.isMarkable()) {
-            BufferOffset load = movePatchablePtr(ImmPtr((void*)val.asRawBits()), dest);
+            BufferOffset load = movePatchablePtr(ImmPtr(val.bitsAsPunboxPointer()), dest);
             writeDataRelocation(val, load);
         } else {
             movePtr(ImmWord(val.asRawBits()), dest);
@@ -510,10 +509,10 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     }
 
     using vixl::MacroAssembler::B;
-    void B(wasm::JumpTarget) {
+    void B(wasm::TrapDesc) {
         MOZ_CRASH("NYI");
     }
-    void B(wasm::JumpTarget, Condition cond) {
+    void B(wasm::TrapDesc, Condition cond) {
         MOZ_CRASH("NYI");
     }
 
@@ -685,7 +684,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
         loadPtr(addr, ip0);
         Br(vixl::ip0);
     }
-    void jump(wasm::JumpTarget target) {
+    void jump(wasm::TrapDesc target) {
         MOZ_CRASH("NYI");
     }
 
@@ -1849,7 +1848,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     }
     void writeDataRelocation(const Value& val, BufferOffset load) {
         if (val.isMarkable()) {
-            gc::Cell* cell = reinterpret_cast<gc::Cell*>(val.toGCThing());
+            gc::Cell* cell = val.toMarkablePointer();
             if (cell && gc::IsInsideNursery(cell))
                 embedsNurseryPointers_ = true;
             dataRelocations_.writeUnsigned(load.getOffset());

@@ -2237,6 +2237,7 @@ def UnionTypes(descriptors, dictionaries, callbacks, typedefs, config):
         'js::error::throw_type_error',
         'js::jsapi::HandleValue',
         'js::jsapi::JSContext',
+        'js::jsapi::JSObject',
         'js::jsapi::MutableHandleValue',
         'js::jsval::JSVal',
     ]
@@ -2437,7 +2438,7 @@ def CreateBindingJSObject(descriptor, parent=None):
     create = "let raw = Box::into_raw(object);\nlet _rt = RootedTraceable::new(&*raw);\n"
     if descriptor.proxy:
         create += """
-let handler = RegisterBindings::proxy_handlers[PrototypeList::Proxies::%s as usize];
+let handler = RegisterBindings::PROXY_HANDLERS[PrototypeList::Proxies::%s as usize];
 rooted!(in(cx) let private = PrivateValue(raw as *const libc::c_void));
 let obj = NewProxyObject(cx, handler,
                          private.handle(),
@@ -2935,7 +2936,7 @@ assert!(!unforgeable_holder.is_null());
             code.append(InitUnforgeablePropertiesOnHolder(self.descriptor, self.properties))
             code.append(CGGeneric("""\
 JS_SetReservedSlot(prototype.get(), DOM_PROTO_UNFORGEABLE_HOLDER_SLOT,
-                   ObjectValue(&*unforgeable_holder.get()))"""))
+                   ObjectValue(unforgeable_holder.get()))"""))
 
         return CGList(code, "\n")
 
@@ -4047,6 +4048,9 @@ def getUnionTypeTemplateVars(type, descriptorProvider):
     elif type.isPrimitive():
         name = type.name
         typeName = builtinNames[type.tag()]
+    elif type.isObject():
+        name = type.name
+        typeName = "*mut JSObject"
     else:
         raise TypeError("Can't handle %s in unions yet" % type)
 
@@ -4056,7 +4060,6 @@ def getUnionTypeTemplateVars(type, descriptorProvider):
         isDefinitelyObject=True)
     template = info.template
 
-    assert not type.isObject()
     jsConversion = string.Template(template).substitute({
         "val": "value",
     })
@@ -4176,7 +4179,10 @@ class CGUnionConversionStruct(CGThing):
 
         objectMemberTypes = filter(lambda t: t.isObject(), memberTypes)
         if len(objectMemberTypes) > 0:
-            raise TypeError("Can't handle objects in unions.")
+            assert len(objectMemberTypes) == 1
+            typeName = objectMemberTypes[0].name
+            object = CGGeneric(get_match(typeName))
+            names.append(typeName)
         else:
             object = None
 
@@ -4191,7 +4197,8 @@ class CGUnionConversionStruct(CGThing):
 
         hasObjectTypes = interfaceObject or arrayObject or dateObject or nonPlatformObject or object or mozMapObject
         if hasObjectTypes:
-            assert interfaceObject or arrayObject or mozMapObject
+            # "object" is not distinguishable from other types
+            assert not object or not (interfaceObject or arrayObject or dateObject or callbackObject or mozMapObject)
             templateBody = CGList([], "\n")
             if interfaceObject:
                 templateBody.append(interfaceObject)
@@ -6014,7 +6021,7 @@ class CGRegisterProxyHandlersMethod(CGAbstractMethod):
 
     def definition_body(self):
         return CGList([
-            CGGeneric("proxy_handlers[Proxies::%s as usize] = Bindings::%s::DefineProxyHandler();"
+            CGGeneric("PROXY_HANDLERS[Proxies::%s as usize] = Bindings::%s::DefineProxyHandler();"
                       % (desc.name, '::'.join([desc.name + 'Binding'] * 2)))
             for desc in self.descriptors
         ], "\n")
@@ -6025,7 +6032,7 @@ class CGRegisterProxyHandlers(CGThing):
         descriptors = config.getDescriptors(proxy=True)
         length = len(descriptors)
         self.root = CGList([
-            CGGeneric("pub static mut proxy_handlers: [*const libc::c_void; %d] = [0 as *const libc::c_void; %d];"
+            CGGeneric("pub static mut PROXY_HANDLERS: [*const libc::c_void; %d] = [0 as *const libc::c_void; %d];"
                       % (length, length)),
             CGRegisterProxyHandlersMethod(descriptors),
         ], "\n")
@@ -6600,7 +6607,7 @@ class CallCallback(CallbackMethod):
         return "aThisObj.get()"
 
     def getCallableDecl(self):
-        return "rooted!(in(cx) let callable = ObjectValue(&*self.parent.callback()));\n"
+        return "rooted!(in(cx) let callable = ObjectValue(self.parent.callback()));\n"
 
     def getCallGuard(self):
         if self.callback._treatNonObjectAsNull:
@@ -6639,7 +6646,7 @@ class CallbackOperationBase(CallbackMethod):
             'rooted!(in(cx) let callable =\n' +
             CGIndenter(
                 CGIfElseWrapper('isCallable',
-                                CGGeneric('ObjectValue(&*self.parent.callback())'),
+                                CGGeneric('ObjectValue(self.parent.callback())'),
                                 CGGeneric(getCallableFromProp))).define() + ');\n')
 
     def getCallGuard(self):
@@ -6727,10 +6734,10 @@ class CGIterableMethodGenerator(CGGeneric):
                   throw_type_error(cx, "Argument 1 of ${ifaceName}.forEach is not callable.");
                   return false;
                 }
-                rooted!(in(cx) let arg0 = ObjectValue(&*arg0));
+                rooted!(in(cx) let arg0 = ObjectValue(arg0));
                 rooted!(in(cx) let mut call_arg1 = UndefinedValue());
                 rooted!(in(cx) let mut call_arg2 = UndefinedValue());
-                let mut call_args = vec![UndefinedValue(), UndefinedValue(), ObjectValue(&**_obj)];
+                let mut call_args = vec![UndefinedValue(), UndefinedValue(), ObjectValue(*_obj)];
                 rooted!(in(cx) let mut ignoredReturnVal = UndefinedValue());
                 for i in 0..(*this).get_iterable_length() {
                   (*this).get_value_at_index(i).to_jsval(cx, call_arg1.handle_mut());

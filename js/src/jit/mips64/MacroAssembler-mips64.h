@@ -222,7 +222,7 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
 
     void writeDataRelocation(const Value& val) {
         if (val.isMarkable()) {
-            gc::Cell* cell = reinterpret_cast<gc::Cell *>(val.toGCThing());
+            gc::Cell* cell = val.toMarkablePointer();
             if (cell && gc::IsInsideNursery(cell))
                 embedsNurseryPointers_ = true;
             dataRelocations_.writeUnsigned(currentOffset());
@@ -326,7 +326,7 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
         branch(code);
     }
 
-    void jump(wasm::JumpTarget target) {
+    void jump(wasm::TrapDesc target) {
         ma_b(target);
     }
 
@@ -498,13 +498,12 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
     void pushValue(ValueOperand val);
     void popValue(ValueOperand val);
     void pushValue(const Value& val) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
         if (val.isMarkable()) {
             writeDataRelocation(val);
-            movWithPatch(ImmWord(jv.asBits), ScratchRegister);
+            movWithPatch(ImmWord(val.asRawBits()), ScratchRegister);
             push(ScratchRegister);
         } else {
-            push(ImmWord(jv.asBits));
+            push(ImmWord(val.asRawBits()));
         }
     }
     void pushValue(JSValueType type, Register reg) {

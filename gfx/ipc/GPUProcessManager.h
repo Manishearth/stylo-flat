@@ -104,6 +104,11 @@ public:
   // to access aLayersId across process.
   void MapLayerTreeId(uint64_t aLayersId, base::ProcessId aOwningId);
 
+  // Release compositor-thread resources referred to by |aID|.
+  //
+  // Must run on the content main thread.
+  void UnmapLayerTreeId(uint64_t aLayersId, base::ProcessId aOwningId);
+
   // Checks to see if aLayersId and aRequestingPID have been mapped by MapLayerTreeId
   bool IsLayerTreeIdMapped(uint64_t aLayersId, base::ProcessId aRequestingId);
 
@@ -113,10 +118,6 @@ public:
   // Must run on the content main thread.
   uint64_t AllocateLayerTreeId();
 
-  // Release compositor-thread resources referred to by |aID|.
-  //
-  // Must run on the content main thread.
-  void DeallocateLayerTreeId(uint64_t aLayersId);
 
   void OnProcessLaunchComplete(GPUProcessHost* aHost) override;
   void OnProcessUnexpectedShutdown(GPUProcessHost* aHost) override;
@@ -128,9 +129,18 @@ public:
   void AddListener(GPUProcessListener* aListener);
   void RemoveListener(GPUProcessListener* aListener);
 
+  // Send a message to the GPU process observer service to broadcast. Returns
+  // true if the message was sent, false if not.
+  bool NotifyGpuObservers(const char* aTopic);
+
   // Returns access to the PGPU protocol if a GPU process is present.
   GPUChild* GetGPUChild() {
     return mGPUChild;
+  }
+
+  // Returns whether or not a GPU process was ever launched.
+  bool AttemptedGPUProcess() const {
+    return mNumProcessAttempts > 0;
   }
 
 private:

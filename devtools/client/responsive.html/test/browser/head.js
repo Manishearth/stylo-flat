@@ -31,6 +31,7 @@ Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/inspector/test/shared-head.js",
   this);
 
+const E10S_MULTI_ENABLED = Services.prefs.getIntPref("dom.ipc.processCount") > 1;
 const TEST_URI_ROOT = "http://example.com/browser/devtools/client/responsive.html/test/browser/";
 const OPEN_DEVICE_MODAL_VALUE = "OPEN_DEVICE_MODAL";
 
@@ -197,9 +198,11 @@ function* testViewportResize(ui, selector, moveBy,
                              expectedViewportSize, expectedHandleMove) {
   let win = ui.toolWindow;
 
+  let changed = once(ui, "viewport-device-changed");
   let resized = waitForViewportResizeTo(ui, ...expectedViewportSize);
   let startRect = dragElementBy(selector, ...moveBy, win);
   yield resized;
+  yield changed;
 
   let endRect = getElRect(selector, win);
   is(endRect.left - startRect.left, expectedHandleMove[0],
@@ -230,9 +233,8 @@ function openDeviceModal(ui) {
     "The device modal is displayed.");
 }
 
-function switchDevice({ toolWindow }, value) {
+function switchSelector({ toolWindow }, selector, value) {
   return new Promise(resolve => {
-    let selector = ".viewport-device-selector";
     let select = toolWindow.document.querySelector(selector);
     isnot(select, null, `selector "${selector}" should match an existing element.`);
 
@@ -255,6 +257,18 @@ function switchDevice({ toolWindow }, value) {
     select.dispatchEvent(event);
   });
 }
+
+let switchDevice = Task.async(function* (ui, value) {
+  let changed = once(ui, "viewport-device-changed");
+  yield switchSelector(ui, ".viewport-device-selector", value);
+  yield changed;
+});
+
+let switchNetworkThrottling = Task.async(function* (ui, value) {
+  let changed = once(ui, "network-throttling-changed");
+  yield switchSelector(ui, "#global-network-throttling-selector", value);
+  yield changed;
+});
 
 function getSessionHistory(browser) {
   return ContentTask.spawn(browser, {}, function* () {
@@ -326,5 +340,12 @@ function addDeviceForTest(device) {
   registerCleanupFunction(() => {
     // Note that assertions in cleanup functions are not displayed unless they failed.
     ok(removeDevice(device), `Removed Test Device "${device.name}" from the list.`);
+  });
+}
+
+function waitForClientClose(ui) {
+  return new Promise(resolve => {
+    info("RDM's debugger client is now closed");
+    ui.client.addOneTimeListener("closed", resolve);
   });
 }

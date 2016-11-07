@@ -7,20 +7,20 @@
 //! to depend on script.
 
 #![feature(custom_derive, plugin, proc_macro, rustc_attrs, structural_match)]
-#![plugin(heapsize_plugin, plugins)]
+#![plugin(plugins)]
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
-extern crate app_units;
 extern crate canvas_traits;
 extern crate cookie as cookie_rs;
 extern crate devtools_traits;
 extern crate euclid;
 extern crate gfx_traits;
 extern crate heapsize;
+#[macro_use] extern crate heapsize_derive;
+extern crate hyper;
 extern crate hyper_serde;
 extern crate ipc_channel;
-extern crate layers;
 extern crate libc;
 extern crate msg;
 extern crate net_traits;
@@ -33,12 +33,10 @@ extern crate serde_derive;
 extern crate style_traits;
 extern crate time;
 extern crate url;
-extern crate util;
 
 mod script_msg;
 pub mod webdriver_msg;
 
-use app_units::Au;
 use devtools_traits::{DevtoolScriptControlMsg, ScriptToDevtoolsControlMsg, WorkerId};
 use euclid::Size2D;
 use euclid::length::Length;
@@ -46,18 +44,19 @@ use euclid::point::Point2D;
 use euclid::rect::Rect;
 use euclid::scale_factor::ScaleFactor;
 use euclid::size::TypedSize2D;
+use gfx_traits::DevicePixel;
 use gfx_traits::Epoch;
-use gfx_traits::LayerId;
-use gfx_traits::StackingContextId;
+use gfx_traits::ScrollRootId;
 use heapsize::HeapSizeOf;
+use hyper::header::Headers;
+use hyper::method::Method;
 use ipc_channel::ipc::{IpcReceiver, IpcSender};
-use layers::geometry::DevicePixel;
 use libc::c_void;
-use msg::constellation_msg::{FrameId, FrameType, Image, Key, KeyModifiers, KeyState, LoadData};
-use msg::constellation_msg::{PipelineId, PipelineNamespaceId, ReferrerPolicy};
-use msg::constellation_msg::{TraversalDirection, WindowSizeType};
-use net_traits::{LoadOrigin, ResourceThreads};
+use msg::constellation_msg::{FrameId, FrameType, Key, KeyModifiers, KeyState};
+use msg::constellation_msg::{PipelineId, PipelineNamespaceId, ReferrerPolicy, TraversalDirection};
+use net_traits::ResourceThreads;
 use net_traits::bluetooth_thread::BluetoothMethodMsg;
+use net_traits::image::base::Image;
 use net_traits::image_cache_thread::ImageCacheThread;
 use net_traits::response::HttpsState;
 use profile_traits::mem;
@@ -68,7 +67,6 @@ use std::fmt;
 use std::sync::mpsc::{Receiver, Sender};
 use style_traits::{PagePx, UnsafeNode, ViewportPx};
 use url::Url;
-use util::ipc::OptionalOpaqueIpcSender;
 use webdriver_msg::{LoadStatus, WebDriverScriptCommand};
 
 pub use script_msg::{LayoutMsg, ScriptMsg, EventResult, LogEntry};
@@ -118,13 +116,48 @@ pub enum LayoutControlMsg {
     GetCurrentEpoch(IpcSender<Epoch>),
     /// Asks layout to run another step in its animation.
     TickAnimations,
-    /// Informs layout as to which regions of the page are visible.
-    SetVisibleRects(Vec<(LayerId, Rect<Au>)>),
     /// Tells layout about the new scrolling offsets of each scrollable stacking context.
     SetStackingContextScrollStates(Vec<StackingContextScrollState>),
     /// Requests the current load state of Web fonts. `true` is returned if fonts are still loading
     /// and `false` is returned if all fonts have loaded.
     GetWebFontLoadState(IpcSender<bool>),
+}
+
+/// Similar to net::resource_thread::LoadData
+/// can be passed to LoadUrl to load a page with GET/POST
+/// parameters or headers
+#[derive(Clone, Deserialize, Serialize)]
+pub struct LoadData {
+    /// The URL.
+    pub url: Url,
+    /// The method.
+    #[serde(deserialize_with = "::hyper_serde::deserialize",
+            serialize_with = "::hyper_serde::serialize")]
+    pub method: Method,
+    /// The headers.
+    #[serde(deserialize_with = "::hyper_serde::deserialize",
+            serialize_with = "::hyper_serde::serialize")]
+    pub headers: Headers,
+    /// The data.
+    pub data: Option<Vec<u8>>,
+    /// The referrer policy.
+    pub referrer_policy: Option<ReferrerPolicy>,
+    /// The referrer URL.
+    pub referrer_url: Option<Url>,
+}
+
+impl LoadData {
+    /// Create a new `LoadData` object.
+    pub fn new(url: Url, referrer_policy: Option<ReferrerPolicy>, referrer_url: Option<Url>) -> LoadData {
+        LoadData {
+            url: url,
+            method: Method::Get,
+            headers: Headers::new(),
+            data: None,
+            referrer_policy: referrer_policy,
+            referrer_url: referrer_url,
+        }
+    }
 }
 
 /// The initial data associated with a newly-created framed pipeline.
@@ -138,9 +171,6 @@ pub struct NewLayoutInfo {
     pub frame_type: FrameType,
     /// Network request data which will be initiated by the script thread.
     pub load_data: LoadData,
-    /// The paint channel, cast to `OptionalOpaqueIpcSender`. This is really an
-    /// `Sender<LayoutToPaintMsg>`.
-    pub paint_chan: OptionalOpaqueIpcSender,
     /// A port on which layout can receive messages from the pipeline.
     pub pipeline_port: IpcReceiver<LayoutControlMsg>,
     /// A sender for the layout thread to communicate to the constellation.
@@ -571,8 +601,8 @@ pub enum AnimationTickType {
 /// The scroll state of a stacking context.
 #[derive(Copy, Clone, Debug, Deserialize, Serialize)]
 pub struct StackingContextScrollState {
-    /// The ID of the stacking context.
-    pub stacking_context_id: StackingContextId,
+    /// The ID of the scroll root.
+    pub scroll_root_id: ScrollRootId,
     /// The scrolling offset of this stacking context.
     pub scroll_offset: Point2D<f32>,
 }
@@ -589,6 +619,15 @@ pub struct WindowSizeData {
 
     /// The resolution of the window in dppx, not including any "pinch zoom" factor.
     pub device_pixel_ratio: ScaleFactor<f32, ViewportPx, DevicePixel>,
+}
+
+/// The type of window size change.
+#[derive(Deserialize, Eq, PartialEq, Serialize, Copy, Clone, HeapSizeOf)]
+pub enum WindowSizeType {
+    /// Initial load.
+    Initial,
+    /// Window resize.
+    Resize,
 }
 
 /// Messages to the constellation originating from the WebDriver server.
@@ -683,16 +722,4 @@ pub struct WorkerScriptLoadOrigin {
     pub referrer_policy: Option<ReferrerPolicy>,
     /// the pipeline id of the entity requesting the load
     pub pipeline_id: Option<PipelineId>
-}
-
-impl LoadOrigin for WorkerScriptLoadOrigin {
-    fn referrer_url(&self) -> Option<Url> {
-        self.referrer_url.clone()
-    }
-    fn referrer_policy(&self) -> Option<ReferrerPolicy> {
-        self.referrer_policy.clone()
-    }
-    fn pipeline_id(&self) -> Option<PipelineId> {
-        self.pipeline_id.clone()
-    }
 }

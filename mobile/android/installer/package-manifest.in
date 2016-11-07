@@ -115,7 +115,6 @@
 @BINPATH@/components/docshell.xpt
 @BINPATH@/components/dom.xpt
 @BINPATH@/components/dom_apps.xpt
-@BINPATH@/components/dom_newapps.xpt
 @BINPATH@/components/dom_base.xpt
 @BINPATH@/components/dom_canvas.xpt
 @BINPATH@/components/dom_core.xpt
@@ -262,8 +261,6 @@
 @BINPATH@/components/zipwriter.xpt
 
 ; JavaScript components
-@BINPATH@/components/ChromeNotifications.js
-@BINPATH@/components/ChromeNotifications.manifest
 @BINPATH@/components/ConsoleAPI.manifest
 @BINPATH@/components/ConsoleAPIStorage.js
 @BINPATH@/components/ContactManager.js
@@ -285,8 +282,6 @@
 @BINPATH@/components/BrowserElementProxy.js
 @BINPATH@/components/FeedProcessor.manifest
 @BINPATH@/components/FeedProcessor.js
-@BINPATH@/components/PackagedAppUtils.manifest
-@BINPATH@/components/PackagedAppUtils.js
 @BINPATH@/components/WellKnownOpportunisticUtils.js
 @BINPATH@/components/WellKnownOpportunisticUtils.manifest
 @BINPATH@/components/PermissionSettings.js
@@ -366,8 +361,6 @@
 @BINPATH@/components/TelemetryStartup.manifest
 @BINPATH@/components/XULStore.js
 @BINPATH@/components/XULStore.manifest
-@BINPATH@/components/Webapps.js
-@BINPATH@/components/Webapps.manifest
 @BINPATH@/components/AppsService.js
 @BINPATH@/components/AppsService.manifest
 @BINPATH@/components/htmlMenuBuilder.js
@@ -377,9 +370,6 @@
 @BINPATH@/components/SystemMessageManager.js
 @BINPATH@/components/SystemMessageCache.js
 @BINPATH@/components/SystemMessageManager.manifest
-
-@BINPATH@/components/InstallPackagedWebapp.manifest
-@BINPATH@/components/InstallPackagedWebapp.js
 
 #ifdef MOZ_WEBRTC
 @BINPATH@/components/PeerConnection.js
@@ -415,9 +405,6 @@
 @BINPATH@/components/PresentationDataChannelSessionTransport.manifest
 @BINPATH@/components/LegacyProviders.manifest
 @BINPATH@/components/LegacyPresentationControlService.js
-
-@BINPATH@/components/PACGenerator.js
-@BINPATH@/components/PACGenerator.manifest
 
 @BINPATH@/components/TVSimulatorService.js
 @BINPATH@/components/TVSimulatorService.manifest

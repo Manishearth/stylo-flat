@@ -215,12 +215,11 @@ var ClickEventHandler = {
     const kAutoscroll = 15;  // defined in mozilla/layers/ScrollInputMethods.h
     Services.telemetry.getHistogramById("SCROLL_INPUT_METHODS").add(kAutoscroll);
 
-    if (this._scrollable instanceof content.Window) {
-      this._scrollable.scrollBy(actualScrollX, actualScrollY);
-    } else { // an element with overflow
-      this._scrollable.scrollLeft += actualScrollX;
-      this._scrollable.scrollTop += actualScrollY;
-    }
+    this._scrollable.scrollBy({
+      left: actualScrollX,
+      top: actualScrollY,
+      behavior: "instant"
+    });
     content.requestAnimationFrame(this.autoscrollLoop);
   },
 
@@ -788,7 +787,7 @@ var FindBar = {
     let should = false;
     let can = BrowserUtils.canFastFind(content);
     if (can) {
-      //XXXgijs: why all these shenanigans? Why not use the event's target?
+      // XXXgijs: why all these shenanigans? Why not use the event's target?
       let focusedWindow = {};
       let elt = Services.focus.getFocusedElementForWindow(content, true, focusedWindow);
       let win = focusedWindow.value;
@@ -1398,45 +1397,95 @@ let AutoCompletePopup = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIAutoCompletePopup]),
 
   _connected: false,
+
+  MESSAGES: [
+    "FormAutoComplete:HandleEnter",
+    "FormAutoComplete:PopupClosed",
+    "FormAutoComplete:PopupOpened",
+    "FormAutoComplete:RequestFocus",
+  ],
+
   init: function() {
-    // We need to wait for a content viewer to be available
-    // before we can attach our AutoCompletePopup handler,
-    // since nsFormFillController assumes one will exist
-    // when we call attachToBrowser.
-    let onDCL = () => {
-      removeEventListener("DOMContentLoaded", onDCL);
-      // Hook up the form fill autocomplete controller.
-      let controller = Cc["@mozilla.org/satchel/form-fill-controller;1"]
-                         .getService(Ci.nsIFormFillController);
-      controller.attachToBrowser(docShell,
-                                 this.QueryInterface(Ci.nsIAutoCompletePopup));
-      this._connected = true;
-    };
-    addEventListener("DOMContentLoaded", onDCL);
+    addEventListener("unload", this);
+    addEventListener("DOMContentLoaded", this);
+
+    for (let messageName of this.MESSAGES) {
+      addMessageListener(messageName, this);
+    }
 
     this._input = null;
     this._popupOpen = false;
-
-    addMessageListener("FormAutoComplete:HandleEnter", message => {
-      this.selectedIndex = message.data.selectedIndex;
-
-      let controller = Components.classes["@mozilla.org/autocomplete/controller;1"].
-                  getService(Components.interfaces.nsIAutoCompleteController);
-      controller.handleEnter(message.data.isPopupSelection);
-    });
-
-    addEventListener("unload", function() {
-      AutoCompletePopup.destroy();
-    });
   },
 
   destroy: function() {
     if (this._connected) {
       let controller = Cc["@mozilla.org/satchel/form-fill-controller;1"]
                          .getService(Ci.nsIFormFillController);
-
       controller.detachFromBrowser(docShell);
       this._connected = false;
+    }
+
+    removeEventListener("unload", this);
+    removeEventListener("DOMContentLoaded", this);
+
+    for (let messageName of this.MESSAGES) {
+      removeMessageListener(messageName, this);
+    }
+  },
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "DOMContentLoaded": {
+        removeEventListener("DOMContentLoaded", this);
+
+        // We need to wait for a content viewer to be available
+        // before we can attach our AutoCompletePopup handler,
+        // since nsFormFillController assumes one will exist
+        // when we call attachToBrowser.
+
+        // Hook up the form fill autocomplete controller.
+        let controller = Cc["@mozilla.org/satchel/form-fill-controller;1"]
+                           .getService(Ci.nsIFormFillController);
+        controller.attachToBrowser(docShell,
+                                   this.QueryInterface(Ci.nsIAutoCompletePopup));
+        this._connected = true;
+        break;
+      }
+
+      case "unload": {
+        this.destroy();
+        break;
+      }
+    }
+  },
+
+  receiveMessage(message) {
+    switch (message.name) {
+      case "FormAutoComplete:HandleEnter": {
+        this.selectedIndex = message.data.selectedIndex;
+
+        let controller = Cc["@mozilla.org/autocomplete/controller;1"]
+                           .getService(Ci.nsIAutoCompleteController);
+        controller.handleEnter(message.data.isPopupSelection);
+        break;
+      }
+
+      case "FormAutoComplete:PopupClosed": {
+        this._popupOpen = false;
+        break;
+      }
+
+      case "FormAutoComplete:PopupOpened": {
+        this._popupOpen = true;
+        break;
+      }
+
+      case "FormAutoComplete:RequestFocus": {
+        if (this._input) {
+          this._input.focus();
+        }
+        break;
+      }
     }
   },
 
@@ -1471,10 +1520,13 @@ let AutoCompletePopup = {
     sendAsyncMessage("FormAutoComplete:MaybeOpenPopup",
                      { results, rect, dir });
     this._input = input;
-    this._popupOpen = true;
   },
 
   closePopup: function () {
+    // We set this here instead of just waiting for the
+    // PopupClosed message to do it so that we don't end
+    // up in a state where the content thinks that a popup
+    // is open when it isn't (or soon won't be).
     this._popupOpen = false;
     sendAsyncMessage("FormAutoComplete:ClosePopup", {});
   },
@@ -1516,7 +1568,7 @@ let AutoCompletePopup = {
     }
 
     return results;
-  }
+  },
 }
 
 AutoCompletePopup.init();
@@ -1588,10 +1640,11 @@ let DateTimePickerListener = {
 
   /**
    * Helper function that returns the rect of the element, which is the position
-   * in "screen" coordinates.
+   * relative to the left/top of the content area.
    */
   getBoundingContentRect: function(aElement) {
-    return BrowserUtils.getElementBoundingScreenRect(aElement);
+    return BrowserUtils.getElementBoundingRect(aElement);
+    // return BrowserUtils.getElementBoundingScreenRect(aElement);
   },
 
   /**

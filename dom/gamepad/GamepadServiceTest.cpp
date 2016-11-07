@@ -122,8 +122,12 @@ GamepadServiceTest::AddGamepad(const nsAString& aID,
     return nullptr;
   }
 
+  // Because GamepadServiceTest::AddGamepad() is opened for Web API,
+  // we need to convert aMapping from uint32_t to GamepadMappingType here.
   GamepadAdded a(nsString(aID), 0,
-                (uint32_t)aMapping, aNumButtons, aNumAxes);
+                 static_cast<GamepadMappingType>(aMapping),
+                 GamepadServiceType::Standard,
+                 aNumButtons, aNumAxes);
   GamepadChangeEvent e(a);
   nsCOMPtr<nsIGlobalObject> go = do_QueryInterface(mWindow);
 
@@ -150,7 +154,7 @@ GamepadServiceTest::RemoveGamepad(uint32_t aIndex)
     return;
   }
 
-  GamepadRemoved a(aIndex);
+  GamepadRemoved a(aIndex, GamepadServiceType::Standard);
   GamepadChangeEvent e(a);
 
   uint32_t id = ++mEventNumber;
@@ -171,7 +175,8 @@ GamepadServiceTest::NewButtonEvent(uint32_t aIndex,
     return;
   }
 
-  GamepadButtonInformation a(aIndex, aButton, aPressed, aPressed ? 1.0 : 0);
+  GamepadButtonInformation a(aIndex, GamepadServiceType::Standard,
+                             aButton, aPressed, aPressed ? 1.0 : 0);
   GamepadChangeEvent e(a);
 
   uint32_t id = ++mEventNumber;
@@ -193,7 +198,8 @@ GamepadServiceTest::NewButtonValueEvent(uint32_t aIndex,
     return;
   }
 
-  GamepadButtonInformation a(aIndex, aButton, aPressed, aValue);
+  GamepadButtonInformation a(aIndex, GamepadServiceType::Standard,
+                             aButton, aPressed, aValue);
   GamepadChangeEvent e(a);
 
   uint32_t id = ++mEventNumber;
@@ -214,7 +220,8 @@ GamepadServiceTest::NewAxisMoveEvent(uint32_t aIndex,
     return;
   }
 
-  GamepadAxisInformation a(aIndex, aAxis, aValue);
+  GamepadAxisInformation a(aIndex, GamepadServiceType::Standard,
+                           aAxis, aValue);
   GamepadChangeEvent e(a);
 
   uint32_t id = ++mEventNumber;

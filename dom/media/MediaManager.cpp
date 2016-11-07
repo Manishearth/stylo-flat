@@ -10,6 +10,7 @@
 #include "mozilla/dom/MediaStreamTrack.h"
 #include "GetUserMediaRequest.h"
 #include "MediaStreamListener.h"
+#include "nsArray.h"
 #include "nsContentUtils.h"
 #include "nsHashPropertyBag.h"
 #ifdef MOZ_WIDGET_GONK
@@ -20,7 +21,6 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsIPermissionManager.h"
 #include "nsIPopupWindowManager.h"
-#include "nsISupportsArray.h"
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
 #include "nsISupportsPrimitives.h"
@@ -134,7 +134,7 @@ GetMediaManagerLog()
 }
 #define LOG(msg) MOZ_LOG(GetMediaManagerLog(), mozilla::LogLevel::Debug, msg)
 
-using dom::BasicUnstoppableTrackSource;
+using dom::BasicTrackSource;
 using dom::ConstrainDOMStringParameters;
 using dom::File;
 using dom::GetUserMediaRequest;
@@ -263,7 +263,11 @@ public:
     , mFinished(false)
     , mRemoved(false)
     , mAudioStopped(false)
-    , mVideoStopped(false) {}
+    , mAudioStopPending(false)
+    , mVideoStopped(false)
+    , mVideoStopPending(false)
+    , mChromeNotificationTaskPosted(false)
+  {}
 
   ~GetUserMediaCallbackMediaStreamListener()
   {
@@ -301,6 +305,8 @@ public:
   void StopSharing();
 
   void StopTrack(TrackID aID);
+
+  void NotifyChromeOfTrackStops();
 
   typedef media::Pledge<bool, dom::MediaStreamError*> PledgeVoid;
 
@@ -494,9 +500,21 @@ private:
   // MainThread only.
   bool mAudioStopped;
 
+  // true if we have scheduled MEDIA_STOP or MEDIA_STOP_TRACK for mAudioDevice.
+  // MainThread only.
+  bool mAudioStopPending;
+
   // true if we have sent MEDIA_STOP or MEDIA_STOP_TRACK for mVideoDevice.
   // MainThread only.
   bool mVideoStopped;
+
+  // true if we have scheduled MEDIA_STOP or MEDIA_STOP_TRACK for mVideoDevice.
+  // MainThread only.
+  bool mVideoStopPending;
+
+  // true if we have scheduled a task to notify chrome in the next stable state.
+  // The task will reset this to false. MainThread only.
+  bool mChromeNotificationTaskPosted;
 
   // Set at Activate on MainThread
 
@@ -743,7 +761,8 @@ protected:
 NS_IMPL_ISUPPORTS(MediaDevice, nsIMediaDevice)
 
 MediaDevice::MediaDevice(MediaEngineSource* aSource, bool aIsVideo)
-  : mMediaSource(aSource->GetMediaSource())
+  : mScary(aSource->GetScary())
+  , mMediaSource(aSource->GetMediaSource())
   , mSource(aSource)
   , mIsVideo(aIsVideo)
 {
@@ -881,6 +900,13 @@ MediaDevice::GetRawId(nsAString& aID)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+MediaDevice::GetScary(bool* aScary)
+{
+  *aScary = mScary;
+  return NS_OK;
+}
+
 void
 MediaDevice::SetId(const nsAString& aID)
 {
@@ -996,7 +1022,7 @@ public:
                  "Only fake tracks should appear dynamically");
     NS_ASSERTION(kVideoTrack != aInputTrackID,
                  "Only fake tracks should appear dynamically");
-    return do_AddRef(new BasicUnstoppableTrackSource(mPrincipal));
+    return do_AddRef(new BasicTrackSource(mPrincipal));
   }
 
 protected:
@@ -1144,7 +1170,7 @@ public:
                          const MediaSourceEnum aSource,
                          const TrackID aTrackID,
                          const PeerIdentity* aPeerIdentity)
-          : MediaStreamTrackSource(aPrincipal, false, aLabel), mListener(aListener),
+          : MediaStreamTrackSource(aPrincipal, aLabel), mListener(aListener),
             mSource(aSource), mTrackID(aTrackID), mPeerIdentity(aPeerIdentity) {}
 
         MediaSourceEnum GetMediaSource() const override
@@ -1513,18 +1539,13 @@ public:
     }
     if (errorMsg) {
       LOG(("%s %d", errorMsg, rv));
-      switch (rv) {
-        case NS_ERROR_NOT_AVAILABLE: {
-          MOZ_ASSERT(badConstraint);
-          Fail(NS_LITERAL_STRING("OverconstrainedError"),
-               NS_LITERAL_STRING(""),
-               NS_ConvertUTF8toUTF16(badConstraint));
-          break;
-        }
-        default:
-          Fail(NS_LITERAL_STRING("NotReadableError"),
-               NS_ConvertUTF8toUTF16(errorMsg));
-          break;
+      if (badConstraint) {
+        Fail(NS_LITERAL_STRING("OverconstrainedError"),
+             NS_LITERAL_STRING(""),
+             NS_ConvertUTF8toUTF16(badConstraint));
+      } else {
+        Fail(NS_LITERAL_STRING("NotReadableError"),
+             NS_ConvertUTF8toUTF16(errorMsg));
       }
       return NS_OK;
     }
@@ -1898,9 +1919,9 @@ media::Parent<media::NonE10s>*
 MediaManager::GetNonE10sParent()
 {
   if (!mNonE10sParent) {
-    mNonE10sParent = MakeUnique<media::Parent<media::NonE10s>>(true);
+    mNonE10sParent = new media::Parent<media::NonE10s>();
   }
-  return mNonE10sParent.get();
+  return mNonE10sParent;
 }
 
 /* static */ void
@@ -2344,12 +2365,6 @@ if (privileged) {
     }
   }
 
-#if defined(MOZ_B2G_CAMERA) && defined(MOZ_WIDGET_GONK)
-  if (mCameraManager == nullptr) {
-    mCameraManager = nsDOMCameraManager::CreateInstance(aWindow);
-  }
-#endif
-
   // Get list of all devices, with origin-specific device ids.
 
   MediaEnginePrefs prefs = mPrefs;
@@ -2411,14 +2426,10 @@ if (privileged) {
         return;
       }
 
-      nsCOMPtr<nsISupportsArray> devicesCopy; // before we give up devices below
+      nsCOMPtr<nsIMutableArray> devicesCopy = nsArray::Create(); // before we give up devices below
       if (!askPermission) {
-        nsresult rv = NS_NewISupportsArray(getter_AddRefs(devicesCopy));
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return;
-        }
         for (auto& device : **devices) {
-          rv = devicesCopy->AppendElement(device);
+          nsresult rv = devicesCopy->AppendElement(device, /*weak =*/ false);
           if (NS_WARN_IF(NS_FAILED(rv))) {
             return;
           }
@@ -3036,15 +3047,15 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
     if (aSubject) {
       // A particular device or devices were chosen by the user.
       // NOTE: does not allow setting a device to null; assumes nullptr
-      nsCOMPtr<nsISupportsArray> array(do_QueryInterface(aSubject));
+      nsCOMPtr<nsIArray> array(do_QueryInterface(aSubject));
       MOZ_ASSERT(array);
       uint32_t len = 0;
-      array->Count(&len);
+      array->GetLength(&len);
       bool videoFound = false, audioFound = false;
       for (uint32_t i = 0; i < len; i++) {
-        nsCOMPtr<nsISupports> supports;
-        array->GetElementAt(i,getter_AddRefs(supports));
-        nsCOMPtr<nsIMediaDevice> device(do_QueryInterface(supports));
+        nsCOMPtr<nsIMediaDevice> device;
+        array->QueryElementAt(i, NS_GET_IID(nsIMediaDevice),
+                              getter_AddRefs(device));
         MOZ_ASSERT(device); // shouldn't be returning anything else...
         if (device) {
           nsString type;
@@ -3138,14 +3149,11 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
 }
 
 nsresult
-MediaManager::GetActiveMediaCaptureWindows(nsISupportsArray** aArray)
+MediaManager::GetActiveMediaCaptureWindows(nsIArray** aArray)
 {
   MOZ_ASSERT(aArray);
-  nsISupportsArray* array;
-  nsresult rv = NS_NewISupportsArray(&array); // AddRefs
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+
+  nsCOMPtr<nsIMutableArray> array = nsArray::Create();
 
   for (auto iter = mActiveWindows.Iter(); !iter.Done(); iter.Next()) {
     const uint64_t& id = iter.Key();
@@ -3176,11 +3184,11 @@ MediaManager::GetActiveMediaCaptureWindows(nsISupportsArray** aArray)
       }
     }
     if (capturing) {
-      array->AppendElement(window);
+      array->AppendElement(window, /*weak =*/ false);
     }
   }
 
-  *aArray = array;
+  array.forget(aArray);
   return NS_OK;
 }
 
@@ -3339,14 +3347,14 @@ MediaManager::IterateWindowListeners(nsPIDOMWindowInner* aWindow,
 void
 MediaManager::StopMediaStreams()
 {
-  nsCOMPtr<nsISupportsArray> array;
+  nsCOMPtr<nsIArray> array;
   GetActiveMediaCaptureWindows(getter_AddRefs(array));
   uint32_t len;
-  array->Count(&len);
+  array->GetLength(&len);
   for (uint32_t i = 0; i < len; i++) {
-    nsCOMPtr<nsISupports> window;
-    array->GetElementAt(i, getter_AddRefs(window));
-    nsCOMPtr<nsPIDOMWindowInner> win(do_QueryInterface(window));
+    nsCOMPtr<nsPIDOMWindowInner> win;
+    array->QueryElementAt(i, NS_GET_IID(nsPIDOMWindowInner),
+                          getter_AddRefs(win));
     if (win) {
       OnNavigation(win->WindowID());
     }
@@ -3358,14 +3366,14 @@ MediaManager::IsActivelyCapturingOrHasAPermission(uint64_t aWindowId)
 {
   // Does page currently have a gUM stream active?
 
-  nsCOMPtr<nsISupportsArray> array;
+  nsCOMPtr<nsIArray> array;
   GetActiveMediaCaptureWindows(getter_AddRefs(array));
   uint32_t len;
-  array->Count(&len);
+  array->GetLength(&len);
   for (uint32_t i = 0; i < len; i++) {
-    nsCOMPtr<nsISupports> window;
-    array->GetElementAt(i, getter_AddRefs(window));
-    nsCOMPtr<nsPIDOMWindowInner> win(do_QueryInterface(window));
+    nsCOMPtr<nsPIDOMWindowInner> win;
+    array->QueryElementAt(i, NS_GET_IID(nsPIDOMWindowInner),
+                          getter_AddRefs(win));
     if (win && win->WindowID() == aWindowId) {
       return true;
     }
@@ -3520,7 +3528,7 @@ GetUserMediaCallbackMediaStreamListener::ApplyConstraintsToTrack(
         } else {
           auto* window = nsGlobalWindow::GetInnerWindowWithId(windowId);
           if (window) {
-            if (rv == NS_ERROR_NOT_AVAILABLE) {
+            if (badConstraint) {
               nsString constraint;
               constraint.AssignASCII(badConstraint);
               RefPtr<MediaStreamError> error =
@@ -3564,9 +3572,9 @@ GetUserMediaCallbackMediaStreamListener::StopTrack(TrackID aTrackID)
   {
     LOG(("Can't stop gUM track %d (%s), exists=%d, stopped=%d",
          aTrackID,
-         aTrackID == kAudioTrack ? "audio" : "video",
-         aTrackID == kAudioTrack ? !!mAudioDevice : !!mVideoDevice,
-         aTrackID == kAudioTrack ? mAudioStopped : mVideoStopped));
+         stopAudio ? "audio" : "video",
+         stopAudio ? !!mAudioDevice : !!mVideoDevice,
+         stopAudio ? mAudioStopped : mVideoStopped));
     return;
   }
 
@@ -3576,6 +3584,59 @@ GetUserMediaCallbackMediaStreamListener::StopTrack(TrackID aTrackID)
     return;
   }
 
+  // We wait until stable state before notifying chrome so chrome only does one
+  // update if more tracks are stopped in this event loop.
+
+  mAudioStopPending |= stopAudio;
+  mVideoStopPending |= stopVideo;
+
+  if (mChromeNotificationTaskPosted) {
+    return;
+  }
+
+  nsCOMPtr<nsIRunnable> runnable =
+    NewRunnableMethod(this, &GetUserMediaCallbackMediaStreamListener::NotifyChromeOfTrackStops);
+  nsContentUtils::RunInStableState(runnable.forget());
+  mChromeNotificationTaskPosted = true;
+}
+
+void
+GetUserMediaCallbackMediaStreamListener::NotifyChromeOfTrackStops()
+{
+  MOZ_ASSERT(mChromeNotificationTaskPosted);
+  mChromeNotificationTaskPosted = false;
+
+  // We make sure these are always reset.
+  bool stopAudio = mAudioStopPending;
+  bool stopVideo = mVideoStopPending;
+  mAudioStopPending = false;
+  mVideoStopPending = false;
+
+  if (mStopped) {
+    // The entire capture was stopped while we were waiting for stable state.
+    return;
+  }
+
+  MOZ_ASSERT(stopAudio || stopVideo);
+  MOZ_ASSERT(!stopAudio || !mAudioStopped,
+             "If there's a pending stop for audio, audio must not have been stopped");
+  MOZ_ASSERT(!stopAudio || mAudioDevice,
+             "If there's a pending stop for audio, there must be an audio device");
+  MOZ_ASSERT(!stopVideo || !mVideoStopped,
+             "If there's a pending stop for video, video must not have been stopped");
+  MOZ_ASSERT(!stopVideo || mVideoDevice,
+             "If there's a pending stop for video, there must be a video device");
+
+  if ((stopAudio || mAudioStopped || !mAudioDevice) &&
+      (stopVideo || mVideoStopped || !mVideoDevice)) {
+    // All tracks stopped.
+    Stop();
+    return;
+  }
+
+  mAudioStopped |= stopAudio;
+  mVideoStopped |= stopVideo;
+
   RefPtr<MediaOperationTask> mediaOperation =
     new MediaOperationTask(MEDIA_STOP_TRACK,
                            this, nullptr, nullptr,
@@ -3583,8 +3644,6 @@ GetUserMediaCallbackMediaStreamListener::StopTrack(TrackID aTrackID)
                            stopVideo ? mVideoDevice.get() : nullptr,
                            false , mWindowID, nullptr);
   MediaManager::PostTask(mediaOperation.forget());
-  mAudioStopped |= stopAudio;
-  mVideoStopped |= stopVideo;
 }
 
 void

@@ -24,13 +24,14 @@ add_task(function* testWindowCreate() {
       });
     };
 
-    let windowId;
+    let windowId, tabId;
     browser.windows.getCurrent().then(window => {
       windowId = window.id;
 
       browser.test.log("Create additional tab in window 1");
       return browser.tabs.create({windowId, url: "about:blank"});
     }).then(tab => {
+      tabId = tab.id;
       browser.test.log("Create a new window, adopting the new tab");
 
       // Note that we want to check against actual boolean values for
@@ -39,10 +40,11 @@ add_task(function* testWindowCreate() {
 
       return Promise.all([
         promiseTabAttached(),
-        browser.windows.create({tabId: tab.id}),
+        browser.windows.create({tabId: tabId}),
       ]);
     }).then(([, window]) => {
       browser.test.assertEq(false, window.incognito, "New window is not private");
+      browser.test.assertEq(tabId, window.tabs[0].id, "tabs property populated correctly");
 
       browser.test.log("Close the new window");
       return browser.windows.remove(window.id);
@@ -111,14 +113,19 @@ add_task(function* testWindowCreate() {
     }).then(() => {
       browser.test.log("Try to create a window with two URLs");
 
-      return browser.windows.create({url: ["http://example.com/", "http://example.org/"]});
-    }).then(window => {
       return Promise.all([
+        // tabs.onUpdated can be invoked between the call of windows.create and
+        // the invocation of its callback/promise, so set up the listeners
+        // before creating the window.
         promiseTabUpdated("http://example.com/"),
         promiseTabUpdated("http://example.org/"),
-        Promise.resolve(window),
+        browser.windows.create({url: ["http://example.com/", "http://example.org/"]}),
       ]);
     }).then(([, , window]) => {
+      browser.test.assertEq(2, window.tabs.length, "2 tabs were opened in new window");
+      browser.test.assertEq("about:blank", window.tabs[0].url, "about:blank, page not loaded yet");
+      browser.test.assertEq("about:blank", window.tabs[1].url, "about:blank, page not loaded yet");
+
       return browser.windows.get(window.id, {populate: true});
     }).then(window => {
       browser.test.assertEq(2, window.tabs.length, "2 tabs were opened in new window");
@@ -145,4 +152,3 @@ add_task(function* testWindowCreate() {
   yield extension.awaitFinish("window-create");
   yield extension.unload();
 });
-

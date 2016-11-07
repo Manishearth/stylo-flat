@@ -9,22 +9,22 @@
 #include "mozilla/layers/TextureClient.h"
 
 namespace mozilla {
+namespace dom {
+class VideoDecoderManagerChild;
+}
 namespace layers {
 
 class GPUVideoTextureData : public TextureData
 {
 public:
-  GPUVideoTextureData(const SurfaceDescriptorGPUVideo& aSD,
-                      const gfx::IntSize& aSize)
-    : mSD(aSD)
-    , mSize(aSize)
-  {}
-
-  ~GPUVideoTextureData() {};
+  GPUVideoTextureData(dom::VideoDecoderManagerChild* aManager,
+                      const SurfaceDescriptorGPUVideo& aSD,
+                      const gfx::IntSize& aSize);
+  ~GPUVideoTextureData();
 
   virtual void FillInfo(TextureData::Info& aInfo) const override;
 
-  virtual bool Lock(OpenMode, FenceHandle*) override { return true; };
+  virtual bool Lock(OpenMode) override { return true; };
 
   virtual void Unlock() override {};
 
@@ -35,6 +35,7 @@ public:
   virtual void Forget(LayersIPCChannel* aAllocator) override;
 
 protected:
+  RefPtr<dom::VideoDecoderManagerChild> mManager;
   SurfaceDescriptorGPUVideo mSD;
   gfx::IntSize mSize;
 };

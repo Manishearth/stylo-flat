@@ -24,6 +24,7 @@
 #include "mozilla/layers/PersistentBufferProvider.h"
 #include "ClientReadbackLayer.h"        // for ClientReadbackLayer
 #include "nsAString.h"
+#include "nsDisplayList.h"
 #include "nsIWidgetListener.h"
 #include "nsTArray.h"                   // for AutoTArray
 #include "nsXULAppAPI.h"                // for XRE_GetProcessType, etc
@@ -186,13 +187,13 @@ ClientLayerManager::CreateReadbackLayer()
   return layer.forget();
 }
 
-void
+bool
 ClientLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
 {
   MOZ_ASSERT(mForwarder, "ClientLayerManager::BeginTransaction without forwarder");
   if (!mForwarder->IPCOpen()) {
     gfxCriticalNote << "ClientLayerManager::BeginTransaction with IPC channel down. GPU process may have died.";
-    return;
+    return false;
   }
 
   mInTransaction = true;
@@ -237,7 +238,7 @@ ClientLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
   //
   // Desktop does not support async zoom yet, so we ignore this for those
   // platforms.
-#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK) || defined(MOZ_WIDGET_UIKIT)
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_UIKIT)
   if (mWidget && mWidget->GetOwningTabChild()) {
     mCompositorMightResample = AsyncPanZoomEnabled();
   }
@@ -262,12 +263,13 @@ ClientLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
       mApzTestData.StartNewPaint(mPaintSequenceNumber);
     }
   }
+  return true;
 }
 
-void
+bool
 ClientLayerManager::BeginTransaction()
 {
-  BeginTransactionWithTarget(nullptr);
+  return BeginTransactionWithTarget(nullptr);
 }
 
 bool
@@ -275,12 +277,10 @@ ClientLayerManager::EndTransactionInternal(DrawPaintedLayerCallback aCallback,
                                            void* aCallbackData,
                                            EndTransactionFlags)
 {
+  PaintTelemetry::AutoRecord record(PaintTelemetry::Metric::Rasterization);
+
   PROFILER_LABEL("ClientLayerManager", "EndTransactionInternal",
     js::ProfileEntry::Category::GRAPHICS);
-
-  if (!mForwarder || !mForwarder->IPCOpen()) {
-    return false;
-  }
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   MOZ_LAYERS_LOG(("  ----- (beginning paint)"));
@@ -356,6 +356,12 @@ ClientLayerManager::EndTransaction(DrawPaintedLayerCallback aCallback,
                                    void* aCallbackData,
                                    EndTransactionFlags aFlags)
 {
+  if (!mForwarder->IPCOpen()) {
+    mTransactionIdAllocator->RevokeTransactionId(mLatestTransactionId);
+    mInTransaction = false;
+    return;
+  }
+
   if (mWidget) {
     mWidget->PrepareWindowEffects();
   }
@@ -365,8 +371,9 @@ ClientLayerManager::EndTransaction(DrawPaintedLayerCallback aCallback,
   if (mRepeatTransaction) {
     mRepeatTransaction = false;
     mIsRepeatTransaction = true;
-    BeginTransaction();
-    ClientLayerManager::EndTransaction(aCallback, aCallbackData, aFlags);
+    if (BeginTransaction()) {
+      ClientLayerManager::EndTransaction(aCallback, aCallbackData, aFlags);
+    }
     mIsRepeatTransaction = false;
   } else {
     MakeSnapshotIfRequired();
@@ -381,9 +388,11 @@ ClientLayerManager::EndEmptyTransaction(EndTransactionFlags aFlags)
 {
   mInTransaction = false;
 
-  if (!mRoot) {
+  if (!mRoot || !mForwarder->IPCOpen()) {
+    mTransactionIdAllocator->RevokeTransactionId(mLatestTransactionId);
     return false;
   }
+
   if (!EndTransactionInternal(nullptr, nullptr, aFlags)) {
     // Return without calling ForwardTransaction. This leaves the
     // ShadowLayerForwarder transaction open; the following
@@ -735,6 +744,7 @@ bool
 ClientLayerManager::AreComponentAlphaLayersEnabled()
 {
   return GetCompositorBackendType() != LayersBackend::LAYERS_BASIC &&
+         AsShadowForwarder()->SupportsComponentAlpha() &&
          LayerManager::AreComponentAlphaLayersEnabled();
 }
 

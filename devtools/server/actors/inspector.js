@@ -73,7 +73,7 @@ const {
   isShadowAnonymous,
   getFrameElement
 } = require("devtools/shared/layout/utils");
-const {getLayoutChangesObserver, releaseLayoutChangesObserver} = require("devtools/server/actors/layout");
+const {getLayoutChangesObserver, releaseLayoutChangesObserver} = require("devtools/server/actors/reflow");
 const nodeFilterConstants = require("devtools/shared/dom-node-filter-constants");
 
 const {EventParsers} = require("devtools/server/event-parsers");
@@ -190,6 +190,11 @@ exports.setInspectingNode = function (val) {
  *         Properly cased version of the node tag name
  */
 const getNodeDisplayName = function (rawNode) {
+  if (rawNode.nodeName && !rawNode.localName) {
+    // The localName & prefix APIs have been moved from the Node interface to the Element
+    // interface. Use Node.nodeName as a fallback.
+    return rawNode.nodeName;
+  }
   return (rawNode.prefix ? rawNode.prefix + ":" : "") + rawNode.localName;
 };
 exports.getNodeDisplayName = getNodeDisplayName;
@@ -613,6 +618,9 @@ var NodeActor = exports.NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
    * Get a unique selector string for this node.
    */
   getUniqueSelector: function () {
+    if (Cu.isDeadWrapper(this.rawNode)) {
+      return "";
+    }
     return CssLogic.findCssSelector(this.rawNode);
   },
 
@@ -2349,7 +2357,13 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
   },
 
   onFrameLoad: function ({ window, isTopLevel }) {
-    if (!this.rootDoc && isTopLevel) {
+    if (isTopLevel) {
+      // If we initialize the inspector while the document is loading,
+      // we may already have a root document set in the constructor.
+      if (this.rootDoc && !Cu.isDeadWrapper(this.rootDoc) &&
+          this.rootDoc.defaultView) {
+        this.onFrameUnload({ window: this.rootDoc.defaultView });
+      }
       this.rootDoc = window.document;
       this.rootNode = this.document();
       this.queueMutation({

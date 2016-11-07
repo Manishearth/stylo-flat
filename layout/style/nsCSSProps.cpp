@@ -864,6 +864,8 @@ const KTableEntry nsCSSProps::kAppearanceKTable[] = {
   { eCSSKeyword__moz_mac_disclosure_button_closed, NS_THEME_MAC_DISCLOSURE_BUTTON_CLOSED },
   { eCSSKeyword__moz_gtk_info_bar,              NS_THEME_GTK_INFO_BAR },
   { eCSSKeyword__moz_mac_source_list,           NS_THEME_MAC_SOURCE_LIST },
+  { eCSSKeyword__moz_mac_source_list_selection, NS_THEME_MAC_SOURCE_LIST_SELECTION },
+  { eCSSKeyword__moz_mac_active_source_list_selection, NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION },
   { eCSSKeyword_UNKNOWN,                        -1 }
 };
 
@@ -1784,10 +1786,10 @@ const KTableEntry nsCSSProps::kObjectFitKTable[] = {
 };
 
 const KTableEntry nsCSSProps::kOrientKTable[] = {
-  { eCSSKeyword_inline,     NS_STYLE_ORIENT_INLINE },
-  { eCSSKeyword_block,      NS_STYLE_ORIENT_BLOCK },
-  { eCSSKeyword_horizontal, NS_STYLE_ORIENT_HORIZONTAL },
-  { eCSSKeyword_vertical,   NS_STYLE_ORIENT_VERTICAL },
+  { eCSSKeyword_inline,     StyleOrient::Inline },
+  { eCSSKeyword_block,      StyleOrient::Block },
+  { eCSSKeyword_horizontal, StyleOrient::Horizontal },
+  { eCSSKeyword_vertical,   StyleOrient::Vertical },
   { eCSSKeyword_UNKNOWN,    -1 }
 };
 
@@ -2119,17 +2121,17 @@ const KTableEntry nsCSSProps::kUserFocusKTable[] = {
 };
 
 const KTableEntry nsCSSProps::kUserInputKTable[] = {
-  { eCSSKeyword_none,     NS_STYLE_USER_INPUT_NONE },
-  { eCSSKeyword_auto,     NS_STYLE_USER_INPUT_AUTO },
-  { eCSSKeyword_enabled,  NS_STYLE_USER_INPUT_ENABLED },
-  { eCSSKeyword_disabled, NS_STYLE_USER_INPUT_DISABLED },
+  { eCSSKeyword_none,     StyleUserInput::None },
+  { eCSSKeyword_enabled,  StyleUserInput::Enabled },
+  { eCSSKeyword_disabled, StyleUserInput::Disabled },
+  { eCSSKeyword_auto,     StyleUserInput::Auto },
   { eCSSKeyword_UNKNOWN,  -1 }
 };
 
 const KTableEntry nsCSSProps::kUserModifyKTable[] = {
-  { eCSSKeyword_read_only,  NS_STYLE_USER_MODIFY_READ_ONLY },
-  { eCSSKeyword_read_write, NS_STYLE_USER_MODIFY_READ_WRITE },
-  { eCSSKeyword_write_only, NS_STYLE_USER_MODIFY_WRITE_ONLY },
+  { eCSSKeyword_read_only,  StyleUserModify::ReadOnly },
+  { eCSSKeyword_read_write, StyleUserModify::ReadWrite },
+  { eCSSKeyword_write_only, StyleUserModify::WriteOnly },
   { eCSSKeyword_UNKNOWN,    -1 }
 };
 
@@ -2187,9 +2189,9 @@ const KTableEntry nsCSSProps::kWidthKTable[] = {
 };
 
 const KTableEntry nsCSSProps::kWindowDraggingKTable[] = {
-  { eCSSKeyword_default, NS_STYLE_WINDOW_DRAGGING_DEFAULT },
-  { eCSSKeyword_drag, NS_STYLE_WINDOW_DRAGGING_DRAG },
-  { eCSSKeyword_no_drag, NS_STYLE_WINDOW_DRAGGING_NO_DRAG },
+  { eCSSKeyword_default, StyleWindowDragging::Default },
+  { eCSSKeyword_drag, StyleWindowDragging::Drag },
+  { eCSSKeyword_no_drag, StyleWindowDragging::NoDrag },
   { eCSSKeyword_UNKNOWN, -1 }
 };
 

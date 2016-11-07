@@ -6,10 +6,11 @@ use app_units::Au;
 use cssparser::{Parser, SourcePosition};
 use euclid::size::TypedSize2D;
 use std::borrow::ToOwned;
+use string_cache::Atom;
 use style::error_reporting::ParseErrorReporter;
 use style::media_queries::*;
 use style::parser::ParserContextExtraData;
-use style::stylesheets::{Stylesheet, Origin, CSSRuleIteratorExt};
+use style::stylesheets::{Stylesheet, Origin, CSSRule};
 use style::values::specified;
 use url::Url;
 
@@ -28,18 +29,30 @@ fn test_media_rule<F>(css: &str, callback: F) where F: Fn(&MediaQueryList, &str)
     let stylesheet = Stylesheet::from_str(css, url, Origin::Author, Box::new(CSSErrorReporterTest),
                                           ParserContextExtraData::default());
     let mut rule_count = 0;
-    for rule in stylesheet.rules().media() {
+    media_queries(&stylesheet.rules, &mut |mq| {
         rule_count += 1;
-        callback(&rule.media_queries, css);
-    }
+        callback(mq, css);
+    });
     assert!(rule_count > 0);
+}
+
+fn media_queries<F>(rules: &[CSSRule], f: &mut F) where F: FnMut(&MediaQueryList) {
+    for rule in rules {
+        rule.with_nested_rules_and_mq(|rules, mq| {
+            if let Some(mq) = mq {
+                f(mq)
+            }
+            media_queries(rules, f)
+        })
+    }
 }
 
 fn media_query_test(device: &Device, css: &str, expected_rule_count: usize) {
     let url = Url::parse("http://localhost").unwrap();
     let ss = Stylesheet::from_str(css, url, Origin::Author, Box::new(CSSErrorReporterTest),
                                   ParserContextExtraData::default());
-    let rule_count = ss.effective_rules(device).style().count();
+    let mut rule_count = 0;
+    ss.effective_style_rules(device, |_| rule_count += 1);
     assert!(rule_count == expected_rule_count, css.to_owned());
 }
 
@@ -114,7 +127,7 @@ fn test_mq_unknown() {
         assert!(list.media_queries.len() == 1, css.to_owned());
         let q = &list.media_queries[0];
         assert!(q.qualifier == None, css.to_owned());
-        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown), css.to_owned());
+        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown(Atom::from("fridge"))), css.to_owned());
         assert!(q.expressions.len() == 0, css.to_owned());
     });
 
@@ -122,7 +135,7 @@ fn test_mq_unknown() {
         assert!(list.media_queries.len() == 1, css.to_owned());
         let q = &list.media_queries[0];
         assert!(q.qualifier == Some(Qualifier::Only), css.to_owned());
-        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown), css.to_owned());
+        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown(Atom::from("glass"))), css.to_owned());
         assert!(q.expressions.len() == 0, css.to_owned());
     });
 
@@ -130,7 +143,7 @@ fn test_mq_unknown() {
         assert!(list.media_queries.len() == 1, css.to_owned());
         let q = &list.media_queries[0];
         assert!(q.qualifier == Some(Qualifier::Not), css.to_owned());
-        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown), css.to_owned());
+        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown(Atom::from("wood"))), css.to_owned());
         assert!(q.expressions.len() == 0, css.to_owned());
     });
 }
@@ -235,7 +248,7 @@ fn test_mq_expressions() {
         assert!(list.media_queries.len() == 1, css.to_owned());
         let q = &list.media_queries[0];
         assert!(q.qualifier == None, css.to_owned());
-        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown), css.to_owned());
+        assert!(q.media_type == MediaQueryType::MediaType(MediaType::Unknown(Atom::from("fridge"))), css.to_owned());
         assert!(q.expressions.len() == 1, css.to_owned());
         match q.expressions[0] {
             Expression::Width(Range::Max(w)) => assert!(w == specified::Length::Absolute(Au::from_px(52))),

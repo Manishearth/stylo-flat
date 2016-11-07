@@ -15,6 +15,7 @@
 #include "js/Utility.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
+#include "vm/SelfHosting.h"
 
 #include "jsobjinlines.h"
 
@@ -192,8 +193,8 @@ MapIteratorObject::finalize(FreeOp* fop, JSObject* obj)
 }
 
 bool
-MapIteratorObject::next(JSContext* cx, Handle<MapIteratorObject*> mapIterator,
-                        HandleArrayObject resultPairObj)
+MapIteratorObject::next(Handle<MapIteratorObject*> mapIterator, HandleArrayObject resultPairObj,
+                        JSContext* cx)
 {
     // Check invariants for inlined _GetNextMapEntryForIterator.
 
@@ -564,73 +565,12 @@ MapObject::construct(JSContext* cx, unsigned argc, Value* vp)
         return false;
 
     if (!args.get(0).isNullOrUndefined()) {
-        RootedValue adderVal(cx);
-        if (!GetProperty(cx, obj, obj, cx->names().set, &adderVal))
+        FixedInvokeArgs<1> args2(cx);
+        args2[0].set(args[0]);
+
+        RootedValue thisv(cx, ObjectValue(*obj));
+        if (!CallSelfHostedFunction(cx, cx->names().MapConstructorInit, thisv, args2, args2.rval()))
             return false;
-
-        if (!IsCallable(adderVal))
-            return ReportIsNotFunction(cx, adderVal);
-
-        bool isOriginalAdder = IsNativeFunction(adderVal, MapObject::set);
-        RootedValue mapVal(cx, ObjectValue(*obj));
-        FastCallGuard fig(cx, adderVal);
-        InvokeArgs& args2 = fig.args();
-
-        ForOfIterator iter(cx);
-        if (!iter.init(args[0]))
-            return false;
-
-        RootedValue pairVal(cx);
-        RootedObject pairObj(cx);
-        RootedValue dummy(cx);
-        Rooted<HashableValue> hkey(cx);
-        ValueMap* map = obj->getData();
-        while (true) {
-            bool done;
-            if (!iter.next(&pairVal, &done))
-                return false;
-            if (done)
-                break;
-            if (!pairVal.isObject()) {
-                JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_INVALID_MAP_ITERABLE,
-                                          "Map");
-                return false;
-            }
-
-            pairObj = &pairVal.toObject();
-            if (!pairObj)
-                return false;
-
-            RootedValue key(cx);
-            if (!GetElement(cx, pairObj, pairObj, 0, &key))
-                return false;
-
-            RootedValue val(cx);
-            if (!GetElement(cx, pairObj, pairObj, 1, &val))
-                return false;
-
-            if (isOriginalAdder) {
-                if (!hkey.setValue(cx, key))
-                    return false;
-
-                HeapPtr<Value> rval(val);
-                if (!WriteBarrierPost(cx->runtime(), obj, key) ||
-                    !map->put(hkey, rval))
-                {
-                    ReportOutOfMemory(cx);
-                    return false;
-                }
-            } else {
-                if (!args2.init(2))
-                    return false;
-
-                args2[0].set(key);
-                args2[1].set(val);
-
-                if (!fig.call(cx, adderVal, mapVal, &dummy))
-                    return false;
-            }
-        }
     }
 
     args.rval().setObject(*obj);
@@ -940,14 +880,15 @@ const Class SetIteratorObject::class_ = {
 };
 
 const JSFunctionSpec SetIteratorObject::methods[] = {
-    JS_FN("next", next, 0, 0),
+    JS_SELF_HOSTED_FN("next", "SetIteratorNext", 0, 0),
     JS_FS_END
 };
 
-inline ValueSet::Range*
-SetIteratorObject::range()
+static inline ValueSet::Range*
+SetIteratorObjectRange(NativeObject* obj)
 {
-    return static_cast<ValueSet::Range*>(getSlot(RangeSlot).toPrivate());
+    MOZ_ASSERT(obj->is<SetIteratorObject>());
+    return static_cast<ValueSet::Range*>(obj->getSlot(SetIteratorObject::RangeSlot).toPrivate());
 }
 
 inline SetObject::IteratorKind
@@ -980,6 +921,8 @@ SetIteratorObject*
 SetIteratorObject::create(JSContext* cx, HandleObject setobj, ValueSet* data,
                           SetObject::IteratorKind kind)
 {
+    MOZ_ASSERT(kind != SetObject::Keys);
+
     Rooted<GlobalObject*> global(cx, &setobj->global());
     Rooted<JSObject*> proto(cx, GlobalObject::getOrCreateSetIteratorPrototype(cx, global));
     if (!proto)
@@ -995,8 +938,8 @@ SetIteratorObject::create(JSContext* cx, HandleObject setobj, ValueSet* data,
         return nullptr;
     }
     iterobj->setSlot(TargetSlot, ObjectValue(*setobj));
-    iterobj->setSlot(KindSlot, Int32Value(int32_t(kind)));
     iterobj->setSlot(RangeSlot, PrivateValue(range));
+    iterobj->setSlot(KindSlot, Int32Value(int32_t(kind)));
     return iterobj;
 }
 
@@ -1004,63 +947,54 @@ void
 SetIteratorObject::finalize(FreeOp* fop, JSObject* obj)
 {
     MOZ_ASSERT(fop->onMainThread());
-    fop->delete_(obj->as<SetIteratorObject>().range());
+    fop->delete_(SetIteratorObjectRange(static_cast<NativeObject*>(obj)));
 }
 
 bool
-SetIteratorObject::is(HandleValue v)
+SetIteratorObject::next(Handle<SetIteratorObject*> setIterator, HandleArrayObject resultObj,
+                        JSContext* cx)
 {
-    return v.isObject() && v.toObject().is<SetIteratorObject>();
-}
+    // Check invariants for inlined _GetNextSetEntryForIterator.
 
-bool
-SetIteratorObject::next_impl(JSContext* cx, const CallArgs& args)
-{
-    SetIteratorObject& thisobj = args.thisv().toObject().as<SetIteratorObject>();
-    ValueSet::Range* range = thisobj.range();
-    RootedValue value(cx);
-    bool done;
+    // The array should be tenured, so that post-barrier can be done simply.
+    MOZ_ASSERT(resultObj->isTenured());
 
+    // The array elements should be fixed.
+    MOZ_ASSERT(resultObj->hasFixedElements());
+    MOZ_ASSERT(resultObj->getDenseInitializedLength() == 1);
+    MOZ_ASSERT(resultObj->getDenseCapacity() >= 1);
+
+    ValueSet::Range* range = SetIteratorObjectRange(setIterator);
     if (!range || range->empty()) {
         js_delete(range);
-        thisobj.setReservedSlot(RangeSlot, PrivateValue(nullptr));
-        value.setUndefined();
-        done = true;
-    } else {
-        switch (thisobj.kind()) {
-          case SetObject::Values:
-            value = range->front().get();
-            break;
-
-          case SetObject::Entries: {
-            JS::AutoValueArray<2> pair(cx);
-            pair[0].set(range->front().get());
-            pair[1].set(range->front().get());
-
-            JSObject* pairObj = NewDenseCopiedArray(cx, 2, pair.begin());
-            if (!pairObj)
-              return false;
-            value.setObject(*pairObj);
-            break;
-          }
-        }
-        range->popFront();
-        done = false;
+        setIterator->setReservedSlot(RangeSlot, PrivateValue(nullptr));
+        return true;
     }
-
-    RootedObject result(cx, CreateItrResultObject(cx, value, done));
-    if (!result)
-        return false;
-    args.rval().setObject(*result);
-
-    return true;
+    resultObj->setDenseElementWithType(cx, 0, range->front().get());
+    range->popFront();
+    return false;
 }
 
-bool
-SetIteratorObject::next(JSContext* cx, unsigned argc, Value* vp)
+/* static */ JSObject*
+SetIteratorObject::createResult(JSContext* cx)
 {
-    CallArgs args = CallArgsFromVp(argc, vp);
-    return CallNonGenericMethod(cx, is, next_impl, args);
+    RootedArrayObject resultObj(cx, NewDenseFullyAllocatedArray(cx, 1, nullptr, TenuredObject));
+    if (!resultObj)
+        return nullptr;
+
+    Rooted<TaggedProto> proto(cx, resultObj->taggedProto());
+    ObjectGroup* group = ObjectGroupCompartment::makeGroup(cx, resultObj->getClass(), proto);
+    if (!group)
+        return nullptr;
+    resultObj->setGroup(group);
+
+    resultObj->setDenseInitializedLength(1);
+    resultObj->initDenseElement(0, NullValue());
+
+    // See comments in SetIteratorObject::next.
+    AddTypePropertyId(cx, resultObj, JSID_VOID, TypeSet::UnknownType());
+
+    return resultObj;
 }
 
 
@@ -1213,6 +1147,12 @@ SetObject::finalize(FreeOp* fop, JSObject* obj)
 }
 
 bool
+SetObject::isBuiltinAdd(HandleValue add, JSContext* cx)
+{
+    return IsNativeFunction(add, SetObject::add);
+}
+
+bool
 SetObject::construct(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1230,33 +1170,20 @@ SetObject::construct(JSContext* cx, unsigned argc, Value* vp)
         return false;
 
     if (!args.get(0).isNullOrUndefined()) {
-        RootedValue adderVal(cx);
-        if (!GetProperty(cx, obj, obj, cx->names().add, &adderVal))
+        RootedValue iterable(cx, args[0]);
+        bool optimized = false;
+        if (!IsOptimizableInitForSet<GlobalObject::getOrCreateSetPrototype, isBuiltinAdd>(cx, obj, iterable, &optimized))
             return false;
 
-        if (!IsCallable(adderVal))
-            return ReportIsNotFunction(cx, adderVal);
+        if (optimized) {
+            RootedValue keyVal(cx);
+            Rooted<HashableValue> key(cx);
+            ValueSet* set = obj->getData();
+            ArrayObject* array = &iterable.toObject().as<ArrayObject>();
+            for (uint32_t index = 0; index < array->getDenseInitializedLength(); ++index) {
+                keyVal.set(array->getDenseElement(index));
+                MOZ_ASSERT(!keyVal.isMagic(JS_ELEMENTS_HOLE));
 
-        bool isOriginalAdder = IsNativeFunction(adderVal, SetObject::add);
-        RootedValue setVal(cx, ObjectValue(*obj));
-        FastCallGuard fig(cx, adderVal);
-        InvokeArgs& args2 = fig.args();
-
-        RootedValue keyVal(cx);
-        ForOfIterator iter(cx);
-        if (!iter.init(args[0]))
-            return false;
-        Rooted<HashableValue> key(cx);
-        RootedValue dummy(cx);
-        ValueSet* set = obj->getData();
-        while (true) {
-            bool done;
-            if (!iter.next(&keyVal, &done))
-                return false;
-            if (done)
-                break;
-
-            if (isOriginalAdder) {
                 if (!key.setValue(cx, keyVal))
                     return false;
                 if (!WriteBarrierPost(cx->runtime(), obj, keyVal) ||
@@ -1265,15 +1192,14 @@ SetObject::construct(JSContext* cx, unsigned argc, Value* vp)
                     ReportOutOfMemory(cx);
                     return false;
                 }
-            } else {
-                if (!args2.init(1))
-                    return false;
-
-                args2[0].set(keyVal);
-
-                if (!fig.call(cx, adderVal, setVal, &dummy))
-                    return false;
             }
+        } else {
+            FixedInvokeArgs<1> args2(cx);
+            args2[0].set(args[0]);
+
+            RootedValue thisv(cx, ObjectValue(*obj));
+            if (!CallSelfHostedFunction(cx, cx->names().SetConstructorInit, thisv, args2, args2.rval()))
+                return false;
         }
     }
 
@@ -1518,17 +1444,6 @@ JSObject*
 js::InitSetClass(JSContext* cx, HandleObject obj)
 {
     return SetObject::initClass(cx, obj);
-}
-
-const JSFunctionSpec selfhosting_collection_iterator_methods[] = {
-    JS_FN("std_Set_iterator_next", SetIteratorObject::next, 0, 0),
-    JS_FS_END
-};
-
-bool
-js::InitSelfHostingCollectionIteratorFunctions(JSContext* cx, HandleObject obj)
-{
-    return DefineFunctions(cx, obj, selfhosting_collection_iterator_methods, AsIntrinsic);
 }
 
 /*** JS static utility functions *********************************************/
